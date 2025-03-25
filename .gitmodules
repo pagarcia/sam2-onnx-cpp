@@ -1,0 +1,4 @@
+[submodule "sam2"]
+	path = sam2
+	url = https://github.com/pagarcia/sam2.git
+	branch = feature/onnx-export
