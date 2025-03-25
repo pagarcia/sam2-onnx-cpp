@@ -30,3 +30,6 @@
 *.exe
 *.out
 *.app
+
+# Virtual environments
+sam2_env/
