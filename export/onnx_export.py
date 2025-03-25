@@ -2,11 +2,13 @@
 
 import sys
 import os
-# Add the repository root (parent directory of 'export') to sys.path
+# Add the repository root (one level up from export) so Python can find the sam2 package.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Also add the current directory (export) so that the src folder can be found.
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 import argparse
-from sam2.sam2.build_sam import build_sam2
+from sam2.build_sam import build_sam2
 from src.modules import (
     ImageEncoder, ImageDecoder,
     MemAttention, MemEncoder
@@ -17,6 +19,9 @@ from src.utils import (
 )
 
 def main(args):
+    # Ensure the output directory exists
+    os.makedirs(args.outdir, exist_ok=True)
+    
     sam2_model = build_sam2(args.config, args.checkpoint, device="cpu")
     
     # 1) Export Image Encoder

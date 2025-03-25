@@ -1,7 +1,7 @@
 # src/modules.py
 import torch
 from torch import nn
-from sam2.sam2.modeling.sam2_base import SAM2Base
+from sam2.modeling.sam2_base import SAM2Base
 
 class ImageEncoder(nn.Module):
     def __init__(self, sam_model: SAM2Base) -> None:

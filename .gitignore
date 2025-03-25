@@ -33,3 +33,15 @@
 
 # Virtual environments
 sam2_env/
+
+# SAM2 source code
+sam2/
+checkpoints/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python Tools for Visual Studio (PTVS)
+*.pyc
