@@ -32,8 +32,6 @@ def main(args):
     checkpoint = f"checkpoints/sam2.1_hiera_{model_mapping[model_size]['ckpt_suffix']}.pt"
     outdir = f"checkpoints/{model_size}/"
     
-    # If user provided explicit arguments, you could override these values.
-    # For now, we'll print them out for clarity.
     print(f"Using model size: {model_size}")
     print(f"Configuration file: {config_file}")
     print(f"Checkpoint file: {checkpoint}")
@@ -42,28 +40,26 @@ def main(args):
     # Ensure the output directory exists
     os.makedirs(outdir, exist_ok=True)
     
-    # Build SAM2 model (forcing device="cpu" here)
     sam2_model = build_sam2(config_file, checkpoint, device="cpu")
     
     # 1) Export Image Encoder
     encoder = ImageEncoder(sam2_model).cpu()
-    export_image_encoder(encoder, outdir)
+    export_image_encoder(encoder, outdir, name=model_size)
     
     # 2) Export Image Decoder
     decoder = ImageDecoder(sam2_model).cpu()
-    export_image_decoder(decoder, outdir)
+    export_image_decoder(decoder, outdir, name=model_size)
 
     # 3) Export Memory Attention
     mem_attn = MemAttention(sam2_model).cpu()
-    export_memory_attention(mem_attn, outdir)
+    export_memory_attention(mem_attn, outdir, name=model_size)
 
     # 4) Export Memory Encoder
     mem_enc = MemEncoder(sam2_model).cpu()
-    export_memory_encoder(mem_enc, outdir)
+    export_memory_encoder(mem_enc, outdir, name=model_size)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export SAM2 modules to ONNX")
-    # New argument for model size with allowed choices.
     parser.add_argument(
         "--model_size",
         type=str,
@@ -71,6 +67,5 @@ if __name__ == "__main__":
         choices=["base_plus", "large", "small", "tiny"],
         help="Model size variant: base_plus, large, small, or tiny"
     )
-    # We ignore --outdir, --config, and --checkpoint on the command line and compute them automatically.
     args = parser.parse_args()
     main(args)
