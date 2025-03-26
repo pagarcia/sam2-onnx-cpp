@@ -275,13 +275,16 @@ def main():
         )
         final_mask = (final_mask > 0).astype(np.uint8) * 255  # binarize => 0 or 255
 
-        # overlay in green
+        # Prepare alpha-blended overlay in bright green
         overlay = original_display.copy()
-        overlay[final_mask == 255] = (0, 255, 0)
+        color_mask = np.zeros_like(overlay, dtype=np.uint8)
+        color_mask[final_mask == 255] = (0, 255, 0)  # bright green
+        alpha = 0.5
+        overlay = cv2.addWeighted(overlay, 1.0, color_mask, alpha, 0)
 
         # draw points
         for (i, (px, py)) in enumerate(points):
-            color = (0, 0, 255) if labels[i] == 1 else (255, 0, 0)
+            color = (0, 0, 255) if labels[i] == 1 else (255, 0, 0)  # positive=red, negative=blue
             cv2.circle(overlay, (px, py), 6, color, -1)
 
         # scale overlay to display window
