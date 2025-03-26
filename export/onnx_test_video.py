@@ -91,10 +91,6 @@ def interactive_select_points(
     2) Let the user interactively specify seed points (L-click=positive, R-click=negative, M-click=reset).
     3) Return the final chosen points, labels, plus the encoded outputs for subsequent usage.
     """
-    # We want to replicate a portion of the logic from onnx_test_image.py.
-    # The user can repeatedly run the decoder with updated points on the FIRST frame
-    # until they press ESC. Then we collect the final points and labels.
-
     # (A) Run the Encoder on the first frame
     frame_tensor, (orig_H, orig_W) = prepare_image(frame_bgr, encoder_input_size)
     enc_out = session_encoder.run(None, {session_encoder.get_inputs()[0].name: frame_tensor})
@@ -157,14 +153,17 @@ def interactive_select_points(
         # Run decoder
         obj_ptr, mask_for_mem, low_res_masks = session_decoder.run(dec_output_names, decoder_inputs)
 
-        # The mask is in low_res_masks[0,0] => [256,256] (for e.g. "small" model)
+        # The mask is in low_res_masks[0,0] => [256,256]
         final_mask_lowres = low_res_masks[0, 0]
         final_mask = cv2.resize(final_mask_lowres, (w, h), interpolation=cv2.INTER_LINEAR)
         final_mask = (final_mask > 0).astype(np.uint8) * 255
 
-        # Overlay in green
+        # Create alpha-blended green overlay
         overlay = frame_bgr.copy()
-        overlay[final_mask == 255] = (0, 255, 0)
+        color_mask = np.zeros_like(overlay, dtype=np.uint8)
+        color_mask[final_mask == 255] = (0, 255, 0)  # bright green
+        alpha = 0.5
+        overlay = cv2.addWeighted(overlay, 1.0, color_mask, alpha, 0)
 
         # Draw points
         for (i, (px, py)) in enumerate(points):
@@ -229,7 +228,7 @@ def onnx_test_video_mkv_full(args):
 
     to segment the entire video from a single user prompt on the first frame
     (interactively selected).
-    We overlay the mask in semi-transparent red on each frame.
+    We overlay the mask in semi-transparent green on each frame.
     Output is written to <video_basename>_mask_overlay.mkv .
     """
 
@@ -314,7 +313,7 @@ def onnx_test_video_mkv_full(args):
         encoder_input_size
     )
 
-    # If no points were chosen, let's just proceed with no prompt.
+    # If no points were chosen, proceed with no prompt
     if len(user_points) == 0:
         print("[WARNING] No points selected. Proceeding with no prompt on the first frame.")
         first_frame_prompt_coords = []
@@ -323,10 +322,8 @@ def onnx_test_video_mkv_full(args):
         first_feats_0_pass = first_feats_0
         first_feats_1_pass = first_feats_1
     else:
-        # We'll keep them in normal Python list forms for the rest of the code
         first_frame_prompt_coords = user_points
         first_frame_prompt_labels = user_labels
-        # We'll just re-use the previously computed embeddings for the first frame
         first_image_embeddings_pass = first_image_embeddings
         first_feats_0_pass = first_feats_0
         first_feats_1_pass = first_feats_1
@@ -349,11 +346,12 @@ def onnx_test_video_mkv_full(args):
         # (A) Encoder
         t0 = time.time()
         if frame_index == 0:
-            # We already have the encoder outputs for the first frame from interactive step
+            # We already have the encoder outputs for the first frame
             image_embeddings = first_image_embeddings_pass
             feats_0 = first_feats_0_pass
             feats_1 = first_feats_1_pass
-            enc_time = (time.time() - t0)*1000  # approximate, since we're not re-encoding
+            # just measure time roughly
+            enc_time = (time.time() - t0)*1000
         else:
             frame_tensor, (orig_H, orig_W) = prepare_image(frame_bgr, encoder_input_size)
             enc_out = session_encoder.run(None, {session_encoder.get_inputs()[0].name: frame_tensor})
@@ -366,7 +364,7 @@ def onnx_test_video_mkv_full(args):
 
         # (B) Decoder logic
         if frame_index == 0:
-            # First frame => use user prompt
+            # First frame => user prompt
             pcoords, plabels = prepare_points(
                 first_frame_prompt_coords,
                 first_frame_prompt_labels,
@@ -430,15 +428,16 @@ def onnx_test_video_mkv_full(args):
                 )
                 dec_time = (time.time() - t2)*1000
 
-        # (C) Upsample the predicted mask + overlay in red
+        # (C) Upsample the predicted mask + overlay in green
         best_mask = pred_mask[0, 0]  # pick the first
         upsampled_logits = cv2.resize(best_mask, (orig_W, orig_H), interpolation=cv2.INTER_LINEAR)
         final_mask = (upsampled_logits > 0).astype(np.uint8) * 255
 
         alpha = 0.5
         color_mask = np.zeros_like(frame_bgr, dtype=np.uint8)
-        color_mask[final_mask > 0] = (0, 0, 255)  # Red
+        color_mask[final_mask > 0] = (0, 255, 0)  # bright green
         overlay_frame = cv2.addWeighted(frame_bgr, 1.0, color_mask, alpha, 0)
+
         writer.write(overlay_frame)
 
         # (D) Update memory for next frame
@@ -475,7 +474,7 @@ def onnx_test_video_mkv_full(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Use all SAM2 ONNX modules on a video with a single (interactive) user prompt on the first frame. Overlays the predicted mask in red."
+        description="Use all SAM2 ONNX modules on a video with a single (interactive) user prompt on the first frame. Overlays the predicted mask in bright-green with transparency."
     )
     parser.add_argument(
         "--size_name",
@@ -493,7 +492,7 @@ def main():
     parser.add_argument(
         "--max_frames",
         type=int,
-        default=20,
+        default=0,
         help="Max frames to process; 0 => all."
     )
     args = parser.parse_args()
