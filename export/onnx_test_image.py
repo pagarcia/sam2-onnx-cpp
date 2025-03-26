@@ -1,10 +1,20 @@
 import os
+import sys
 import time
 import cv2
 import numpy as np
 import onnxruntime
 from onnxruntime import InferenceSession
 import argparse
+
+# For the file dialog
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+    HAVE_TK = True
+except ImportError:
+    HAVE_TK = False
+
 
 def prepare_points(points_list, labels_list, image_size, input_size):
     """
@@ -27,20 +37,15 @@ def prepare_points(points_list, labels_list, image_size, input_size):
     pts_array = np.array(points_list, dtype=np.float32)  # shape [N,2]
     lbls_array = np.array(labels_list, dtype=np.float32) # shape [N]
 
-    # Scale from original coords => input_size
     H_orig, W_orig = image_size
     H_in, W_in     = input_size
+    pts_array[:, 0] = (pts_array[:, 0] / float(W_orig)) * W_in  # x
+    pts_array[:, 1] = (pts_array[:, 1] / float(H_orig)) * H_in  # y
 
-    # x-coordinate
-    pts_array[:, 0] = (pts_array[:, 0] / float(W_orig)) * W_in
-    # y-coordinate
-    pts_array[:, 1] = (pts_array[:, 1] / float(H_orig)) * H_in
-
-    # Insert batch dimension => [1, N, 2] and [1, N]
-    pts_array  = pts_array[np.newaxis, ...]
-    lbls_array = lbls_array[np.newaxis, ...]
-
+    pts_array  = pts_array[np.newaxis, ...]  # => [1, N, 2]
+    lbls_array = lbls_array[np.newaxis, ...] # => [1, N]
     return pts_array, lbls_array
+
 
 def main():
     parser = argparse.ArgumentParser(description="Interactive SAM2 ONNX test with points prompt.")
@@ -54,63 +59,71 @@ def main():
     parser.add_argument(
         "--image",
         type=str,
-        default="sample_image.jpg",
-        help="Path to the input image."
+        default=None,
+        help="Path to the input image. If not provided, will open a file dialog."
     )
     args = parser.parse_args()
 
-    # ---------------------------------------------------------
-    # 1) Construct paths for the chosen size_name
-    # ---------------------------------------------------------
+    # If no image is given, open a file selection dialog (requires Tk)
+    if args.image is None:
+        if not HAVE_TK:
+            print("Tkinter is not installed, and no --image was provided.\n"
+                  "Please install tkinter or specify --image.")
+            sys.exit(1)
+        else:
+            root = tk.Tk()
+            root.withdraw()  # Hide the main Tk window
+            selected = filedialog.askopenfilename(
+                title="Select an Image File",
+                filetypes=[("Image Files", "*.jpg *.jpeg *.png *.bmp"), ("All Files", "*.*")]
+            )
+            if selected:
+                args.image = selected
+                print(f"[INFO] Selected image: {args.image}")
+            else:
+                print("No file selected. Exiting.")
+                sys.exit(0)
+
     size_name = args.size_name
     outdir = os.path.join("checkpoints", size_name)
-    
-    # Example filenames:
-    #   image_encoder_small.onnx
-    #   image_decoder_small.onnx
-    #   memory_attention_small.onnx
-    #   memory_encoder_small.onnx
+
+    # For example, your .onnx files are named:
+    #  image_encoder_small.onnx
+    #  image_decoder_small.onnx
     encoder_filename = f"image_encoder_{size_name}.onnx"
     decoder_filename = f"image_decoder_{size_name}.onnx"
-    mem_attn_filename = f"memory_attention_{size_name}.onnx"
-    mem_enc_filename  = f"memory_encoder_{size_name}.onnx"
 
     encoder_path = os.path.join(outdir, encoder_filename)
     decoder_path = os.path.join(outdir, decoder_filename)
-    # If you also need memory attention/encoder in this script,
-    # you can load them similarly:
-    #   mem_attn_path = os.path.join(outdir, mem_attn_filename)
-    #   mem_enc_path  = os.path.join(outdir, mem_enc_filename)
 
-    # ---------------------------------------------------------
-    # 2) Load the Encoder ONNX session
-    # ---------------------------------------------------------
+    # ---------------------------------------------------------------------
+    # 1) Load the Encoder ONNX session
+    # ---------------------------------------------------------------------
     if not os.path.exists(encoder_path):
         raise FileNotFoundError(f"Could not find: {encoder_path}")
-    
+
     print(f"[INFO] Loading encoder ONNX => {encoder_path}")
     session_encoder = InferenceSession(
         encoder_path,
         providers=onnxruntime.get_available_providers()
     )
 
-    # Query encoder I/O
     enc_inputs = session_encoder.get_inputs()
     enc_input_name = enc_inputs[0].name  # e.g. "input"
     enc_input_shape = enc_inputs[0].shape  # e.g. [1,3,1024,1024]
-    input_size = enc_input_shape[2:]  # e.g. (1024,1024)
+    input_size = enc_input_shape[2:]
     enc_outputs = session_encoder.get_outputs()
     enc_output_names = [out.name for out in enc_outputs]
 
     print(f"[INFO] Encoder input shape: {enc_input_shape}")
     print(f"[INFO] Encoder output names: {enc_output_names}")
 
-    # ---------------------------------------------------------
-    # 3) Load the Decoder ONNX session
-    # ---------------------------------------------------------
+    # ---------------------------------------------------------------------
+    # 2) Load the Decoder ONNX session
+    # ---------------------------------------------------------------------
     if not os.path.exists(decoder_path):
         raise FileNotFoundError(f"Could not find: {decoder_path}")
-    
+
     print(f"[INFO] Loading decoder ONNX => {decoder_path}")
     session_decoder = InferenceSession(
         decoder_path,
@@ -125,9 +138,9 @@ def main():
     print(f"[INFO] Decoder input names: {dec_input_names}")
     print(f"[INFO] Decoder output names: {dec_output_names}")
 
-    # ---------------------------------------------------------
-    # 4) Read and Preprocess the Image
-    # ---------------------------------------------------------
+    # ---------------------------------------------------------------------
+    # 3) Read and Preprocess the Image
+    # ---------------------------------------------------------------------
     print(f"[INFO] Reading image from: {args.image}")
     original_bgr = cv2.imread(args.image)
     if original_bgr is None:
@@ -152,9 +165,9 @@ def main():
     resized_rgb = np.transpose(resized_rgb, (2, 0, 1))
     input_tensor = np.expand_dims(resized_rgb, axis=0)
 
-    # ---------------------------------------------------------
-    # 5) Run the Encoder once
-    # ---------------------------------------------------------
+    # ---------------------------------------------------------------------
+    # 4) Run the Encoder once
+    # ---------------------------------------------------------------------
     print("[INFO] Running encoder session...")
     t_enc_start = time.time()
     outputs_enc = session_encoder.run(
@@ -173,11 +186,11 @@ def main():
     image_embeddings = outputs_enc[0]
     feats_0 = outputs_enc[1]
     feats_1 = outputs_enc[2]
-    # we ignore [3] and [4] for basic points-only usage
+    # ignoring outputs_enc[3] and outputs_enc[4] in this simple script
 
-    # ---------------------------------------------------------
-    # 6) Interactive Prompting
-    # ---------------------------------------------------------
+    # ---------------------------------------------------------------------
+    # 5) Interactive Prompting
+    # ---------------------------------------------------------------------
     points = []  # list of (x, y)
     labels = []  # list of 1 or 0
     disp_max_size = 1200
@@ -224,9 +237,6 @@ def main():
     cv2.namedWindow("SAM2 Demo", cv2.WINDOW_AUTOSIZE)
     cv2.setMouseCallback("SAM2 Demo", mouse_callback)
 
-    # ---------------------------------------------------------
-    # 7) Run Decoder (whenever points/labels change)
-    # ---------------------------------------------------------
     def run_decoder_inference():
         out_vis = display_image.copy()
         if len(points) == 0:
@@ -263,9 +273,7 @@ def main():
             (W_orig, H_orig),
             interpolation=cv2.INTER_LINEAR
         )
-
-        # binarize => 0 or 255
-        final_mask = (final_mask > 0).astype(np.uint8) * 255
+        final_mask = (final_mask > 0).astype(np.uint8) * 255  # binarize => 0 or 255
 
         # overlay in green
         overlay = original_display.copy()
@@ -276,7 +284,7 @@ def main():
             color = (0, 0, 255) if labels[i] == 1 else (255, 0, 0)
             cv2.circle(overlay, (px, py), 6, color, -1)
 
-        # scale the overlay to fit our display window
+        # scale overlay to display window
         overlay_disp = cv2.resize(overlay, (disp_w, disp_h), interpolation=cv2.INTER_LINEAR)
         cv2.imshow("SAM2 Demo", overlay_disp)
 
@@ -290,6 +298,7 @@ def main():
             break
 
     cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()
