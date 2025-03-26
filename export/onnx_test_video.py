@@ -7,7 +7,7 @@ import argparse
 import onnxruntime
 from onnxruntime import InferenceSession
 
-# For the file dialog (optional)
+# For file dialog (if you want to pick a video via GUI)
 try:
     import tkinter as tk
     from tkinter import filedialog
@@ -42,9 +42,8 @@ def prepare_points(points_list, labels_list, orig_im_size, input_size):
     into the model's input resolution. Returns shape [1,N,2] and [1,N].
     """
     if len(points_list) == 0:
-        # No prompts
         pts = np.zeros((1,0,2), dtype=np.float32)
-        lbls = np.zeros((1,0), dtype=np.float32)
+        lbls= np.zeros((1,0),   dtype=np.float32)
         return pts, lbls
 
     pts_array  = np.array(points_list, dtype=np.float32)  # shape [N,2]
@@ -62,17 +61,10 @@ def prepare_points(points_list, labels_list, orig_im_size, input_size):
     lbls_array = lbls_array[np.newaxis, ...]
     return pts_array, lbls_array
 
-def decode_points(
-    session_decoder,
-    point_coords,
-    point_labels,
-    image_embed,
-    feats_0,
-    feats_1
-):
+def decode_points(session_decoder, point_coords, point_labels, image_embed, feats_0, feats_1):
     """
-    Calls the image_decoder with user-provided points. 
-    Returns (obj_ptr, mask_for_mem, pred_mask).
+    Calls the image_decoder with user-provided points.
+    Returns (obj_ptr, mask_for_mem, low_res_masks).
     """
     decoder_inputs = {
         "point_coords":     point_coords,  # [1,N,2]
@@ -83,12 +75,7 @@ def decode_points(
     }
     return session_decoder.run(None, decoder_inputs)
 
-def decode_no_points(
-    session_decoder,
-    image_embed,
-    feats_0,
-    feats_1
-):
+def decode_no_points(session_decoder, image_embed, feats_0, feats_1):
     """
     Calls the image_decoder with an empty prompt (i.e. no points).
     """
@@ -104,7 +91,7 @@ def decode_no_points(
     return session_decoder.run(None, decoder_inputs)
 
 def main():
-    parser = argparse.ArgumentParser(description="Interactive first-frame annotation, then full-video segmentation with SAM2 ONNX.")
+    parser = argparse.ArgumentParser(description="Interactive first-frame annotation with green mask, then full-video segmentation with SAM2 ONNX.")
     parser.add_argument(
         "--size_name", 
         type=str, 
@@ -126,9 +113,9 @@ def main():
     )
     args = parser.parse_args()
 
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------------
     # 1) Possibly open a file dialog if --video is not given
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------------
     if args.video is None:
         if not HAVE_TK:
             print("Tkinter not available; please specify --video.")
@@ -138,7 +125,7 @@ def main():
             root.withdraw()
             selected = filedialog.askopenfilename(
                 title="Select a Video File",
-                filetypes=[("Video Files", "*.mp4 *.mov *.avi *.mkv *.m4v"), ("All Files","*.*")]
+                filetypes=[("Video Files", "*.mp4 *.mkv *.avi *.mov *.m4v"), ("All Files","*.*")]
             )
             if selected:
                 args.video = selected
@@ -147,37 +134,36 @@ def main():
                 print("No file selected. Exiting.")
                 sys.exit(0)
 
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------------
     # 2) Set up paths and load ONNX models
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------------
     outdir = os.path.join("checkpoints", args.size_name)
-    enc_path = os.path.join(outdir, f"image_encoder_{args.size_name}.onnx")
-    dec_path = os.path.join(outdir, f"image_decoder_{args.size_name}.onnx")
-    memenc_path = os.path.join(outdir, f"memory_encoder_{args.size_name}.onnx")
-    memattn_path= os.path.join(outdir, f"memory_attention_{args.size_name}.onnx")
+    enc_path     = os.path.join(outdir, f"image_encoder_{args.size_name}.onnx")
+    dec_path     = os.path.join(outdir, f"image_decoder_{args.size_name}.onnx")
+    memenc_path  = os.path.join(outdir, f"memory_encoder_{args.size_name}.onnx")
+    memattn_path = os.path.join(outdir, f"memory_attention_{args.size_name}.onnx")
 
     if not os.path.exists(enc_path):
-        raise FileNotFoundError(f"Could not find encoder: {enc_path}")
+        raise FileNotFoundError(f"Could not find: {enc_path}")
     if not os.path.exists(dec_path):
-        raise FileNotFoundError(f"Could not find decoder: {dec_path}")
+        raise FileNotFoundError(f"Could not find: {dec_path}")
     if not os.path.exists(memenc_path):
-        raise FileNotFoundError(f"Could not find memory_encoder: {memenc_path}")
+        raise FileNotFoundError(f"Could not find: {memenc_path}")
     if not os.path.exists(memattn_path):
-        raise FileNotFoundError(f"Could not find memory_attention: {memattn_path}")
+        raise FileNotFoundError(f"Could not find: {memattn_path}")
 
-    print(f"[INFO] Loading ONNX models from {outdir} ...")
-    session_encoder = InferenceSession(enc_path, providers=onnxruntime.get_available_providers())
-    session_decoder = InferenceSession(dec_path, providers=onnxruntime.get_available_providers())
-    session_memenc  = InferenceSession(memenc_path, providers=onnxruntime.get_available_providers())
+    session_encoder = InferenceSession(enc_path,     providers=onnxruntime.get_available_providers())
+    session_decoder = InferenceSession(dec_path,     providers=onnxruntime.get_available_providers())
+    session_memenc  = InferenceSession(memenc_path,  providers=onnxruntime.get_available_providers())
     session_memattn = InferenceSession(memattn_path, providers=onnxruntime.get_available_providers())
 
     enc_input_shape = session_encoder.get_inputs()[0].shape  # e.g. [1,3,1024,1024]
     encoder_input_size = enc_input_shape[2:]                 # (1024, 1024)
-    print(f"[INFO] encoder_input_size = {encoder_input_size}")
+    print(f"[INFO] Using encoder input size = {encoder_input_size}")
 
-    # --------------------------------------------------------------
-    # 3) Open the Video (CV2)
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 3) Open video
+    # ------------------------------------------------------------------
     cap = cv2.VideoCapture(args.video)
     if not cap.isOpened():
         print(f"ERROR: cannot open video: {args.video}")
@@ -189,7 +175,7 @@ def main():
     nframes= int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     print(f"[INFO] Video: {args.video} => {width}x{height}, fps={fps:.1f}, frames={nframes}")
 
-    # Prepare output writer
+    # Prepare output
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
     out_name = os.path.splitext(args.video)[0] + "_mask_overlay.avi"
     writer = cv2.VideoWriter(out_name, fourcc, fps, (width,height))
@@ -197,11 +183,12 @@ def main():
         print(f"ERROR: cannot open VideoWriter for {out_name}")
         cap.release()
         sys.exit(1)
-    print(f"[INFO] Output overlay video => {out_name}")
 
-    # --------------------------------------------------------------
-    # 4) Read the first frame, do interactive annotation
-    # --------------------------------------------------------------
+    print(f"[INFO] Output overlay => {out_name}")
+
+    # ------------------------------------------------------------------
+    # 4) Read the first frame and let user annotate in real-time
+    # ------------------------------------------------------------------
     ret, first_frame_bgr = cap.read()
     if not ret:
         print("ERROR: no frames in video.")
@@ -209,21 +196,61 @@ def main():
         writer.release()
         sys.exit(1)
 
-    # We'll keep the user-drawn points in these lists:
+    # (A) Encode the first frame once
+    first_frame_tensor, (oh, ow) = prepare_image(first_frame_bgr, encoder_input_size)
+    enc_out = session_encoder.run(None, {session_encoder.get_inputs()[0].name: first_frame_tensor})
+    (image_embeddings, feats_0, feats_1, _, _) = enc_out  # ignoring flattened_feat/vision_pos
+
+    # We'll store interactive points here:
     first_frame_points = []
     first_frame_labels = []
 
-    # For display, let's scale down if the video is large
+    # We will display a scaled-down version if the video is large
     disp_max_size = 1200
     scale_factor = 1.0
     if max(width, height) > disp_max_size:
         scale_factor = disp_max_size / float(max(width, height))
     disp_w = int(width * scale_factor)
-    disp_h = int(height * scale_factor)
-    first_frame_disp = cv2.resize(first_frame_bgr, (disp_w, disp_h))
+    disp_h = int(height* scale_factor)
+    first_disp = cv2.resize(first_frame_bgr, (disp_w, disp_h))
 
-    # We'll store a flag to know if user is done
     done_annotating = False
+    def draw_overlay():
+        """
+        Re-run the decoder with the current points, upsample the mask,
+        overlay in *green* on the first frame, and show it.
+        """
+        overlay_img = first_disp.copy()
+        if len(first_frame_points) == 0:
+            # just show points? actually no points => no mask
+            for i, (px, py) in enumerate(first_frame_points):
+                color = (0,0,255) if first_frame_labels[i] == 1 else (255,0,0)
+                cv2.circle(overlay_img, (int(px*scale_factor), int(py*scale_factor)), 5, color, -1)
+            cv2.imshow("First Frame (Green Mask)", overlay_img)
+            return
+
+        # 1) decode with current points
+        pcoords, plabels = prepare_points(first_frame_points, first_frame_labels, (oh, ow), encoder_input_size)
+        dec_out = decode_points(session_decoder, pcoords, plabels, image_embeddings, feats_0, feats_1)
+        _, mask_for_mem, low_res_masks = dec_out
+        best_mask_lowres = low_res_masks[0,0]  # pick the first
+        # 2) upsample
+        upsampled = cv2.resize(best_mask_lowres, (ow, oh), interpolation=cv2.INTER_LINEAR)
+        final_mask = (upsampled > 0).astype(np.uint8)*255
+
+        # 3) overlay in green
+        color_mask = np.zeros_like(first_frame_bgr, dtype=np.uint8)
+        color_mask[final_mask > 0] = (0,255,0)
+        overlay = cv2.addWeighted(first_frame_bgr, 1.0, color_mask, 0.5, 0)
+
+        # 4) draw points
+        for i, (px, py) in enumerate(first_frame_points):
+            color = (0,0,255) if first_frame_labels[i] == 1 else (255,0,0)
+            cv2.circle(overlay, (px, py), 5, color, -1)
+
+        # 5) scale overlay for display
+        overlay_disp = cv2.resize(overlay, (disp_w, disp_h), interpolation=cv2.INTER_LINEAR)
+        cv2.imshow("First Frame (Green Mask)", overlay_disp)
 
     def mouse_callback(event, x, y, flags, param):
         """
@@ -232,120 +259,82 @@ def main():
         Middle-click => reset
         """
         nonlocal first_frame_points, first_frame_labels
-
         if done_annotating:
-            # If user is done, ignore further clicks
             return
-
         if event == cv2.EVENT_LBUTTONDOWN:
-            real_x = int(x / scale_factor)
-            real_y = int(y / scale_factor)
-            first_frame_points.append((real_x, real_y))
+            rx = int(x / scale_factor)
+            ry = int(y / scale_factor)
+            first_frame_points.append((rx, ry))
             first_frame_labels.append(1)
             draw_overlay()
-
         elif event == cv2.EVENT_RBUTTONDOWN:
-            real_x = int(x / scale_factor)
-            real_y = int(y / scale_factor)
-            first_frame_points.append((real_x, real_y))
+            rx = int(x / scale_factor)
+            ry = int(y / scale_factor)
+            first_frame_points.append((rx, ry))
             first_frame_labels.append(0)
             draw_overlay()
-
         elif event == cv2.EVENT_MBUTTONDOWN:
-            # Reset
+            # reset
             first_frame_points = []
             first_frame_labels = []
             draw_overlay()
 
-    # Prepare window
-    cv2.namedWindow("First Frame Annotation", cv2.WINDOW_AUTOSIZE)
-    cv2.setMouseCallback("First Frame Annotation", mouse_callback)
-
-    def draw_overlay():
-        """
-        Draw the current points on top of the first-frame 
-        display image, and show in the window.
-        """
-        overlay = first_frame_disp.copy()
-        for i, (px, py) in enumerate(first_frame_points):
-            color = (0, 0, 255) if first_frame_labels[i] == 1 else (255, 0, 0)
-            cv2.circle(overlay, (int(px*scale_factor), int(py*scale_factor)), 5, color, -1)
-        cv2.imshow("First Frame Annotation", overlay)
-
+    cv2.namedWindow("First Frame (Green Mask)", cv2.WINDOW_AUTOSIZE)
+    cv2.setMouseCallback("First Frame (Green Mask)", mouse_callback)
     draw_overlay()
-    print("[INFO] Place points (L=FG, R=BG, M=reset). Press Enter/Space to finish.")
-    
-    # Event loop for annotation
+
+    print("[INFO] Interactively place points. (L=FG, R=BG, M=reset). Press Enter/Space to finalize.")
     while True:
         key = cv2.waitKey(50) & 0xFF
-        if key in [13, 32]:  # Enter(13) or Space(32)
-            # user says "done"
+        if key in [13, 32]:  # Enter or Space => done
             done_annotating = True
             break
-        elif key == 27:  # Esc
-            print("[INFO] User canceled annotation. Exiting.")
+        elif key == 27:  # Esc => user canceled
+            print("User canceled annotation. Exiting.")
             cap.release()
             writer.release()
             cv2.destroyAllWindows()
             sys.exit(0)
 
-    cv2.destroyWindow("First Frame Annotation")
+    cv2.destroyWindow("First Frame (Green Mask)")
 
-    # --------------------------------------------------------------
-    # 5) Encode & Decode the first frame with the user points
-    # --------------------------------------------------------------
-    #  a) Encode
-    first_tensor, (oh, ow) = prepare_image(first_frame_bgr, encoder_input_size)
-    enc_out = session_encoder.run(None, {session_encoder.get_inputs()[0].name: first_tensor})
-    # We expect 5 outputs: image_embeddings, feats_0, feats_1, flattened_feat, vision_pos_embed
-    image_embeddings = enc_out[0]  # shape [1,256,64,64]
-    feats_0          = enc_out[1]  # shape [1,32,256,256]
-    feats_1          = enc_out[2]  # shape [1,64,128,128]
-    flattened_feat   = enc_out[3]  # shape [4096,1,256]
-    vision_pos_embed = enc_out[4]  # shape [4096,1,256]
+    # ------------------------------------------------------------------
+    # 5) Final decode on first frame with your chosen points + memory encode
+    # ------------------------------------------------------------------
+    if len(first_frame_points) > 0:
+        pcoords, plabels = prepare_points(first_frame_points, first_frame_labels, (oh, ow), encoder_input_size)
+        dec_out = decode_points(session_decoder, pcoords, plabels, image_embeddings, feats_0, feats_1)
+    else:
+        dec_out = decode_no_points(session_decoder, image_embeddings, feats_0, feats_1)
 
-    #  b) Decode with points
-    pcoords, plabels = prepare_points(first_frame_points, first_frame_labels, (oh, ow), encoder_input_size)
-    dec_out = decode_points(session_decoder, pcoords, plabels, image_embeddings, feats_0, feats_1)
     obj_ptr, mask_for_mem, low_res_masks = dec_out
-    # low_res_masks => [1, num_masks, 256, 256]
-    best_mask = low_res_masks[0, 0]  # shape [256, 256]
+    best_mask_lowres = low_res_masks[0,0]
+    upsampled = cv2.resize(best_mask_lowres, (ow, oh), interpolation=cv2.INTER_LINEAR)
+    final_mask = (upsampled>0).astype(np.uint8)*255
 
-    #  c) Upsample & overlay for the first frame
-    upsampled = cv2.resize(best_mask, (ow, oh), interpolation=cv2.INTER_LINEAR)
-    final_mask = (upsampled > 0).astype(np.uint8) * 255
+    # green overlay for consistency
+    c_mask = np.zeros_like(first_frame_bgr, dtype=np.uint8)
+    c_mask[final_mask>0] = (0,255,0)
+    first_overlay = cv2.addWeighted(first_frame_bgr, 1.0, c_mask, 0.5, 0)
+    writer.write(first_overlay)  # write to output
+    print("[INFO] Wrote first frame to output video with green overlay.")
 
-    alpha = 0.5
-    color_mask = np.zeros_like(first_frame_bgr, dtype=np.uint8)
-    color_mask[final_mask > 0] = (0, 0, 255)  # red
-    first_frame_overlay = cv2.addWeighted(first_frame_bgr, 1.0, color_mask, alpha, 0)
-
-    # Write it out
-    writer.write(first_frame_overlay)
-    print("[INFO] Wrote first frame with segmentation overlay to video output.")
-
-    # --------------------------------------------------------------
-    # 6) Memory encode from the first frame
-    # --------------------------------------------------------------
-    # mask_for_mem => shape [1, num_masks, 1024, 1024], pick the first mask
-    mask_for_mem_0 = mask_for_mem[:, 0:1, ...]  # shape [1,1,1024,1024]
+    # memory encode => use mask_for_mem of the 1st mask
+    # shape [1, numMasks, 1024,1024], pick the first mask
+    first_mask_for_mem = mask_for_mem[:,0:1,...]
     memenc_inputs = {
-        "mask_for_mem": mask_for_mem_0,      # [1,1,1024,1024]
+        "mask_for_mem": first_mask_for_mem,  # [1,1,1024,1024]
         "pix_feat":     image_embeddings,    # [1,256,64,64]
     }
     memenc_out = session_memenc.run(None, memenc_inputs)
     mem_feats, mem_pos_enc, temporal_code = memenc_out
-    # We'll store these to use for subsequent frames:
-    #   mem_feats => e.g. shape [?,1,64]
-    #   mem_pos_enc => e.g. shape [?,1,64]
-    #   temporal_code => typically a small embedding for time, if used
 
-    # --------------------------------------------------------------
-    # 7) Process the rest of the frames with memory 
-    #    => "memory_attention + decode_no_points"
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 6) Process subsequent frames with memory
+    #    => memory_attention + decode_no_points
+    # ------------------------------------------------------------------
     frame_index = 1
-    max_frames = args.max_frames if args.max_frames > 0 else nframes
+    max_frames = args.max_frames if args.max_frames>0 else nframes
 
     while True:
         if frame_index >= max_frames:
@@ -356,69 +345,58 @@ def main():
         if not ret:
             break  # end of video
 
-        # Encode
+        # 6a) encode this frame
         frame_tensor, (oh, ow) = prepare_image(frame_bgr, encoder_input_size)
         enc_out = session_encoder.run(None, {session_encoder.get_inputs()[0].name: frame_tensor})
-        (image_embeddings,
-         feats_0,
-         feats_1,
-         flattened_feat,
-         vision_pos_embed) = enc_out
+        image_embeddings, feats_0, feats_1, flattened_feat, vision_pos_embed = enc_out
 
-        # Memory attention
-        # We'll pass the memory feats as "memory_1" and skip "memory_0" (object ptr tokens).
-        # Adjust shapes to match your SAM2 memory_attention signature.
-        # For example, memory_1 => shape [N,64,64,64]? 
-        # This depends on how your model expects them. 
-        # We'll do a minimal example here:
-        memory_0 = np.zeros((0,256), dtype=np.float32)  # no object-pointer tokens
-
-        memattn_inputs = {
-            "current_vision_feat":      image_embeddings,   # [1,256,64,64]
-            "current_vision_pos_embed": vision_pos_embed,   # [4096,1,256]
+        # 6b) memory_attention => fuse current features with stored memory
+        # We'll pass memory_0 = empty array (no obj ptr tokens) 
+        # and memory_1 = mem_feats from first frame
+        memory_0 = np.zeros((0,256), dtype=np.float32)
+        mat_inputs = {
+            "current_vision_feat":      image_embeddings,  
+            "current_vision_pos_embed": vision_pos_embed,
             "memory_0":                memory_0,
-            "memory_1":                mem_feats,          # from first frame
+            "memory_1":                mem_feats,         # from previous step
             "memory_pos_embed":        mem_pos_enc,
         }
-        fused_feat_list = session_memattn.run(None, memattn_inputs)
-        fused_feat = fused_feat_list[0]  # shape [1,256,64,64]
+        fused_out = session_memattn.run(None, mat_inputs)
+        fused_feat = fused_out[0]  # shape [1,256,64,64]
 
-        # Decode with no points
+        # 6c) decode with no points
         dec_out = decode_no_points(session_decoder, fused_feat, feats_0, feats_1)
         obj_ptr, mask_for_mem_batch, low_res_masks = dec_out
-        best_mask = low_res_masks[0, 0]
+        best_mask_lowres = low_res_masks[0,0]
 
-        # Upsample & overlay
-        upsampled = cv2.resize(best_mask, (ow, oh), interpolation=cv2.INTER_LINEAR)
-        final_mask = (upsampled > 0).astype(np.uint8) * 255
+        # 6d) overlay in green
+        upsampled = cv2.resize(best_mask_lowres, (ow, oh), interpolation=cv2.INTER_LINEAR)
+        final_mask = (upsampled>0).astype(np.uint8)*255
 
         color_mask = np.zeros_like(frame_bgr, dtype=np.uint8)
-        color_mask[final_mask > 0] = (0, 0, 255)
+        color_mask[final_mask>0] = (0,255,0)
         overlay = cv2.addWeighted(frame_bgr, 1.0, color_mask, 0.5, 0)
 
-        # Write overlay
         writer.write(overlay)
 
-        # Update memory (optional, or you can keep the same memory from frame 0)
-        # We'll do memory encoder each frame to refine the memory
-        mask_for_mem_0 = mask_for_mem_batch[:, 0:1, ...]  # pick first mask
+        # 6e) optional: re-encode memory for the next frame
+        # Here we pick the first mask from mask_for_mem_batch 
+        # and pass fused_feat as pix_feat
+        next_mask_for_mem = mask_for_mem_batch[:, 0:1, ...]
         memenc_inputs = {
-            "mask_for_mem": mask_for_mem_0,
+            "mask_for_mem": next_mask_for_mem,
             "pix_feat":     fused_feat,
         }
-        mem_feats_out, mem_pos_enc_out, temp_code_out = session_memenc.run(None, memenc_inputs)
-
-        # Now we can replace the memory for the next iteration
-        mem_feats   = mem_feats_out
-        mem_pos_enc = mem_pos_enc_out
-        # We might not do anything special with the updated temporal_code 
-        # unless your model needs it.
+        memenc_out = session_memenc.run(None, memenc_inputs)
+        mem_feats, mem_pos_enc, temporal_code = memenc_out
 
         frame_index += 1
         if frame_index % 20 == 0:
             print(f"[INFO] Processed frame {frame_index}/{nframes} ...")
 
-    # Cleanup
+    # ------------------------------------------------------------------
+    # 7) Cleanup
+    # ------------------------------------------------------------------
     cap.release()
     writer.release()
     print(f"[INFO] Done! Processed {frame_index} frames. Output => {out_name}")
