@@ -58,6 +58,17 @@ Follow these steps after cloning the repository:
    - `memory_attention_small.onnx`
    - `memory_encoder_small.onnx`
 
+4. **Run tests**
+
+   To run the tests you will need to install additional libraries:
+   ```bash
+   pip install opencv-python
+   ```
+   Run the tests with 
+   ```bash
+   python export/onnx_export.py --model_size small
+   ```
+
 ## Project Structure
 
 ```
@@ -65,6 +76,7 @@ sam2-onnx-cpp/
 ├── export/
 │   ├── onnx_export.py      # Main ONNX export script
 │   └── src/                # Contains modules and utilities for ONNX export
+├── checkpoints/            # Contains SAM2 model weights (fetched via sparse bat script)
 ├── sam2/                   # Contains the SAM2 code (fetched via sparse checkout)
 ├── fetch_sparse.bat        # Batch file to fetch sparse checkout and download checkpoints
 ├── README.md               # This file
