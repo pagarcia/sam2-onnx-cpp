@@ -52,7 +52,7 @@ def main():
     parser.add_argument(
         "--size_name",
         type=str,
-        default="small",
+        default="tiny",
         choices=["base_plus", "large", "small", "tiny"],
         help="Which model size to use: base_plus, large, small, or tiny."
     )
