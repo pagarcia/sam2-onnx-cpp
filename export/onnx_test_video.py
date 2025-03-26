@@ -83,6 +83,142 @@ def decode_no_points(session_decoder, image_embed, feats_0, feats_1):
     obj_ptr, mask_for_mem, pred_mask = session_decoder.run(None, inputs)
     return obj_ptr, mask_for_mem, pred_mask
 
+def interactive_select_points(
+    frame_bgr, session_encoder, session_decoder, encoder_input_size
+):
+    """
+    1) Encode the given frame.
+    2) Let the user interactively specify seed points (L-click=positive, R-click=negative, M-click=reset).
+    3) Return the final chosen points, labels, plus the encoded outputs for subsequent usage.
+    """
+    # We want to replicate a portion of the logic from onnx_test_image.py.
+    # The user can repeatedly run the decoder with updated points on the FIRST frame
+    # until they press ESC. Then we collect the final points and labels.
+
+    # (A) Run the Encoder on the first frame
+    frame_tensor, (orig_H, orig_W) = prepare_image(frame_bgr, encoder_input_size)
+    enc_out = session_encoder.run(None, {session_encoder.get_inputs()[0].name: frame_tensor})
+    # unpack
+    image_embeddings = enc_out[0]  # [1,256,64,64]
+    feats_0 = enc_out[1]          # [1,32,256,256]
+    feats_1 = enc_out[2]          # [1,64,128,128]
+    # ignoring enc_out[3] & enc_out[4] for interactive step
+
+    # Prepare for interactive display
+    disp_max_size = 1200
+    scale_factor = 1.0
+    h, w = frame_bgr.shape[:2]
+    if max(w, h) > disp_max_size:
+        scale_factor = disp_max_size / float(max(w, h))
+
+    disp_w = int(w * scale_factor)
+    disp_h = int(h * scale_factor)
+    display_image = cv2.resize(frame_bgr, (disp_w, disp_h))
+
+    # Lists for points and labels
+    points = []
+    labels = []
+
+    # Decoder input names (read from session_decoder)
+    dec_inputs = session_decoder.get_inputs()
+    dec_input_names = [inp.name for inp in dec_inputs]
+    dec_outputs = session_decoder.get_outputs()
+    dec_output_names = [out.name for out in dec_outputs]
+
+    def reset_points():
+        points.clear()
+        labels.clear()
+
+    def run_decoder_inference():
+        """
+        Re-run the decoder each time we add a point or reset,
+        and display the updated mask overlay.
+        """
+        out_vis = display_image.copy()
+        if len(points) == 0:
+            cv2.imshow("First Frame - Interactive SAM2", out_vis)
+            return
+
+        # Scale user-specified points to the encoder input
+        pts, lbls = prepare_points(points, labels, (h, w), (encoder_input_size[0], encoder_input_size[1]))
+        if pts is None:
+            cv2.imshow("First Frame - Interactive SAM2", out_vis)
+            return
+
+        # Build inputs for the decoder
+        decoder_inputs = {
+            dec_input_names[0]: pts,           # point_coords
+            dec_input_names[1]: lbls,          # point_labels
+            dec_input_names[2]: image_embeddings,
+            dec_input_names[3]: feats_0,
+            dec_input_names[4]: feats_1,
+        }
+
+        # Run decoder
+        obj_ptr, mask_for_mem, low_res_masks = session_decoder.run(dec_output_names, decoder_inputs)
+
+        # The mask is in low_res_masks[0,0] => [256,256] (for e.g. "small" model)
+        final_mask_lowres = low_res_masks[0, 0]
+        final_mask = cv2.resize(final_mask_lowres, (w, h), interpolation=cv2.INTER_LINEAR)
+        final_mask = (final_mask > 0).astype(np.uint8) * 255
+
+        # Overlay in green
+        overlay = frame_bgr.copy()
+        overlay[final_mask == 255] = (0, 255, 0)
+
+        # Draw points
+        for (i, (px, py)) in enumerate(points):
+            color = (0, 0, 255) if labels[i] == 1 else (255, 0, 0)
+            cv2.circle(overlay, (px, py), 6, color, -1)
+
+        # Scale overlay to display window
+        overlay_disp = cv2.resize(overlay, (disp_w, disp_h), interpolation=cv2.INTER_LINEAR)
+        cv2.imshow("First Frame - Interactive SAM2", overlay_disp)
+
+    def mouse_callback(event, x, y, flags, param):
+        """
+        L-click => positive point
+        R-click => negative point
+        M-click => reset all
+        """
+        if event == cv2.EVENT_LBUTTONDOWN:
+            real_x = int(x / scale_factor)
+            real_y = int(y / scale_factor)
+            points.append((real_x, real_y))
+            labels.append(1)  # foreground
+            run_decoder_inference()
+        elif event == cv2.EVENT_RBUTTONDOWN:
+            real_x = int(x / scale_factor)
+            real_y = int(y / scale_factor)
+            points.append((real_x, real_y))
+            labels.append(0)  # background
+            run_decoder_inference()
+        elif event == cv2.EVENT_MBUTTONDOWN:
+            reset_points()
+            run_decoder_inference()
+
+    # Create a window and set up the callback
+    cv2.namedWindow("First Frame - Interactive SAM2", cv2.WINDOW_AUTOSIZE)
+    cv2.setMouseCallback("First Frame - Interactive SAM2", mouse_callback)
+
+    # Initial display
+    run_decoder_inference()
+
+    print("[INFO] Interactive mode on first frame.")
+    print("       L-click=foreground, R-click=background, M-click=reset.")
+    print("       Press ESC (or Enter) when done selecting points.")
+
+    while True:
+        key = cv2.waitKey(20) & 0xFF
+        # ESC or ENTER to finalize
+        if key == 27 or key == 13:
+            break
+
+    cv2.destroyAllWindows()
+
+    # Return final user-chosen points & labels, plus the encoder outputs
+    return points, labels, image_embeddings, feats_0, feats_1, (orig_H, orig_W)
+
 def onnx_test_video_mkv_full(args):
     """
     Reads a video file with OpenCV, uses all SAM2 ONNX modules:
@@ -92,8 +228,7 @@ def onnx_test_video_mkv_full(args):
       - memory_attention_<size_name>.onnx
 
     to segment the entire video from a single user prompt on the first frame
-    (hardcoded at coords=(510,375)).
-
+    (interactively selected).
     We overlay the mask in semi-transparent red on each frame.
     Output is written to <video_basename>_mask_overlay.mkv .
     """
@@ -155,10 +290,46 @@ def onnx_test_video_mkv_full(args):
     print(f"Output overlay video => {out_filename}")
 
     # ---------------------------------------------------------------------
-    # 3) A single user prompt on the first frame (hardcoded)
+    # 3) Interactive user prompt on the FIRST frame
     # ---------------------------------------------------------------------
-    first_frame_prompt_coords = [[510, 375]]  # example
-    first_frame_prompt_labels = [1]           # 1 => foreground
+    ret, first_frame_bgr = cap.read()
+    if not ret:
+        print("ERROR: Could not read the first frame from the video.")
+        cap.release()
+        writer.release()
+        return
+
+    # Move back to frame 0 after reading it once:
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+    # Let the user select points on this first frame
+    (user_points, user_labels,
+     first_image_embeddings,
+     first_feats_0,
+     first_feats_1,
+     (orig_H, orig_W)) = interactive_select_points(
+        first_frame_bgr,
+        session_encoder,
+        session_decoder,
+        encoder_input_size
+    )
+
+    # If no points were chosen, let's just proceed with no prompt.
+    if len(user_points) == 0:
+        print("[WARNING] No points selected. Proceeding with no prompt on the first frame.")
+        first_frame_prompt_coords = []
+        first_frame_prompt_labels = []
+        first_image_embeddings_pass = first_image_embeddings
+        first_feats_0_pass = first_feats_0
+        first_feats_1_pass = first_feats_1
+    else:
+        # We'll keep them in normal Python list forms for the rest of the code
+        first_frame_prompt_coords = user_points
+        first_frame_prompt_labels = user_labels
+        # We'll just re-use the previously computed embeddings for the first frame
+        first_image_embeddings_pass = first_image_embeddings
+        first_feats_0_pass = first_feats_0
+        first_feats_1_pass = first_feats_1
 
     # We'll keep memory from just the *last* frame
     mem_feats_accum   = None
@@ -177,20 +348,25 @@ def onnx_test_video_mkv_full(args):
 
         # (A) Encoder
         t0 = time.time()
-        frame_tensor, (orig_H, orig_W) = prepare_image(frame_bgr, encoder_input_size)
-        # The encoder returns 5 outputs:
-        #   image_embeddings, feats_0, feats_1, current_vision_feat, vision_pos_embed
-        enc_out = session_encoder.run(None, {session_encoder.get_inputs()[0].name: frame_tensor})
-        (image_embeddings,
-         feats_0,
-         feats_1,
-         flattened_feat,
-         vision_pos_embed) = enc_out
-        enc_time = (time.time() - t0)*1000
+        if frame_index == 0:
+            # We already have the encoder outputs for the first frame from interactive step
+            image_embeddings = first_image_embeddings_pass
+            feats_0 = first_feats_0_pass
+            feats_1 = first_feats_1_pass
+            enc_time = (time.time() - t0)*1000  # approximate, since we're not re-encoding
+        else:
+            frame_tensor, (orig_H, orig_W) = prepare_image(frame_bgr, encoder_input_size)
+            enc_out = session_encoder.run(None, {session_encoder.get_inputs()[0].name: frame_tensor})
+            (image_embeddings,
+             feats_0,
+             feats_1,
+             flattened_feat,
+             vision_pos_embed) = enc_out
+            enc_time = (time.time() - t0)*1000
 
         # (B) Decoder logic
         if frame_index == 0:
-            # First frame => user prompt
+            # First frame => use user prompt
             pcoords, plabels = prepare_points(
                 first_frame_prompt_coords,
                 first_frame_prompt_labels,
@@ -198,19 +374,28 @@ def onnx_test_video_mkv_full(args):
                 encoder_input_size
             )
             t1 = time.time()
-            obj_ptr, mask_for_mem, pred_mask = decode_with_points(
-                session_decoder,
-                pcoords, plabels,
-                image_embeddings,
-                feats_0,
-                feats_1
-            )
+            if pcoords is None or plabels is None:
+                # If user did not select any points, decode with no points
+                obj_ptr, mask_for_mem, pred_mask = decode_no_points(
+                    session_decoder,
+                    image_embeddings,
+                    feats_0,
+                    feats_1
+                )
+            else:
+                obj_ptr, mask_for_mem, pred_mask = decode_with_points(
+                    session_decoder,
+                    pcoords, plabels,
+                    image_embeddings,
+                    feats_0,
+                    feats_1
+                )
             dec_time = (time.time() - t1)*1000
             mat_time = 0.0
         else:
             # Subsequent frames => memory attention + no-points decode
             if mem_feats_accum is not None and mem_pos_enc_accum is not None:
-                # 1) Memory Attention
+                # memory attention
                 t_mat = time.time()
                 dummy_mem_0 = np.zeros((0,256), dtype=np.float32)
                 mat_inputs = {
@@ -224,7 +409,7 @@ def onnx_test_video_mkv_full(args):
                 fused_feat = fused_feat_list[0]  # => [1,256,64,64]
                 mat_time = (time.time() - t_mat)*1000
 
-                # 2) decode with no new points
+                # decode with no new points
                 t2 = time.time()
                 obj_ptr, mask_for_mem, pred_mask = decode_no_points(
                     session_decoder,
@@ -290,7 +475,7 @@ def onnx_test_video_mkv_full(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Use all SAM2 ONNX modules on a video with a single user prompt (hardcoded). Overlays the predicted mask in red."
+        description="Use all SAM2 ONNX modules on a video with a single (interactive) user prompt on the first frame. Overlays the predicted mask in red."
     )
     parser.add_argument(
         "--size_name",
@@ -308,7 +493,7 @@ def main():
     parser.add_argument(
         "--max_frames",
         type=int,
-        default=0,
+        default=20,
         help="Max frames to process; 0 => all."
     )
     args = parser.parse_args()
