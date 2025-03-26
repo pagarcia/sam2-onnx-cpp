@@ -68,6 +68,7 @@ Follow these steps after cloning the repository:
    ```bash
    python export/onnx_export.py --model_size small
    ```
+   You can find short video samples in https://filesamples.com/formats/mkv and https://www.sample-videos.com/.
 
 ## Project Structure
 
