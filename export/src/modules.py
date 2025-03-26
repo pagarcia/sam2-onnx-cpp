@@ -1,4 +1,3 @@
-# src/modules.py
 import torch
 from torch import nn
 from sam2.modeling.sam2_base import SAM2Base
@@ -7,7 +6,8 @@ class ImageEncoder(nn.Module):
     def __init__(self, sam_model: SAM2Base) -> None:
         super().__init__()
         self.model = sam_model
-        # Feature map sizes for different levels.
+        # Feature map sizes for different levels (in ascending order).
+        # Let's assume index 0 => largest spatial, 2 => smallest spatial.
         self._bb_feat_sizes = [
             (256, 256),
             (128, 128),
@@ -21,22 +21,49 @@ class ImageEncoder(nn.Module):
         # Flatten feature maps and get positional encodings.
         backbone_out, vision_feats, vision_pos_embeds, feat_sizes = \
             self.model._prepare_backbone_features(backbone_out)
+
         # Optionally add no_mem_embed (used for video/multi-frame mode).
         if self.model.directly_add_no_mem_embed:
             vision_feats[-1] = vision_feats[-1] + self.model.no_mem_embed
-        # Convert each level from (HW, B, C) to (B, C, H, W)
-        feats = [
-            feat.permute(1, 2, 0).view(1, -1, *feat_size)
-            for feat, feat_size in zip(vision_feats[::-1], self._bb_feat_sizes[::-1])
-        ][::-1]
-        image_embeddings = feats[2]       # [1, 256, 64, 64]
-        high_res_features1 = feats[0]       # [1, 32, 256, 256]
-        high_res_features2 = feats[1]       # [1, 64, 128, 128]
+
+        # vision_feats is typically a list: [feat0, feat1, feat2] each shape (HW, B, C).
+        # We want them in shapes [B,C,H,W], specifically:
+        #   feat0 -> [1,  32, 256, 256]
+        #   feat1 -> [1,  64, 128, 128]
+        #   feat2 -> [1, 256,  64,  64]
+        # We'll do a straightforward approach that matches self._bb_feat_sizes.
+
+        # CAREFUL: Ensure you're matching the correct feat size with each index
+        # from your actual backbone order.
+        f0_h, f0_w = self._bb_feat_sizes[0]  # (256,256)
+        f1_h, f1_w = self._bb_feat_sizes[1]  # (128,128)
+        f2_h, f2_w = self._bb_feat_sizes[2]  # (64,64)
+
+        feat0 = vision_feats[0]  # shape (256*256, B=1, ?)
+        feat1 = vision_feats[1]
+        feat2 = vision_feats[2]
+
+        # Convert each to (B,C,H,W):
+        feat0 = feat0.permute(1, 2, 0).reshape(1, -1, f0_h, f0_w)
+        feat1 = feat1.permute(1, 2, 0).reshape(1, -1, f1_h, f1_w)
+        feat2 = feat2.permute(1, 2, 0).reshape(1, -1, f2_h, f2_w)
+
+        # Now feat0 => [1, 32, 256, 256], feat1 => [1, 64, 128, 128], feat2 => [1, 256, 64, 64]
+        # According to your original code, you want:
+        #   high_res_features1 = feats[0]  => [1,32,256,256]
+        #   high_res_features2 = feats[1]  => [1,64,128,128]
+        #   image_embeddings   = feats[2]  => [1,256,64,64]
+        high_res_features1 = feat0
+        high_res_features2 = feat1
+        image_embeddings   = feat2
+
         # For multi-frame memory: get flattened vision features and positional encodings.
-        current_vision_feat = vision_feats[-1]   # [4096, 1, 256]
-        vision_pos_embed    = vision_pos_embeds[-1]  # [4096, 1, 256]
+        current_vision_feat = vision_feats[-1]   # [HW, B, C], e.g. [4096, 1, 256]
+        vision_pos_embed    = vision_pos_embeds[-1]  # [HW, B, 256]
+
         return (image_embeddings, high_res_features1, high_res_features2,
                 current_vision_feat, vision_pos_embed)
+
 
 class ImageDecoder(nn.Module):
     def __init__(self, sam_model: SAM2Base) -> None:
@@ -90,96 +117,81 @@ class ImageDecoder(nn.Module):
         mask_for_mem = mask_for_mem + self.sigmoid_bias_for_mem_enc
 
         # 4) Just return low_res_masks directly as pred_mask
-        #    We'll do the final upsample outside ONNX
-        #    shape => [1, num_masks, 256, 256]
         pred_mask = low_res_masks
-
         return obj_ptr, mask_for_mem, pred_mask
+
 
 class MemAttention(nn.Module):
     """
-    Wraps SAM2's memory_attention for multi-frame usage. Typically:
-      fused_features = memory_attention(
-         curr=current_vision_feat,      # shape [HW,B,C]
-         curr_pos=current_vision_pos_embed,  # shape [HW,B,C]
-         memory=...,   # object pointers & spatial memories stacked
-         memory_pos=...,   # positional encodings for memory
-         num_obj_ptr_tokens=...
-      )
-    and returns fused_features in shape [HW,B,C]. We'll provide a
-    friendlier input shape: e.g. [1,256,64,64] for current_vision_feat.
+    Wraps SAM2's memory_attention for multi-frame usage. We'll cut down on repeated
+    reshape/permutations, still returning [1,256,64,64].
     """
 
     def __init__(self, sam_model: SAM2Base) -> None:
         super().__init__()
         self.model = sam_model
         self.memory_attention = sam_model.memory_attention
-        # If your SAM2 model uses a "no_mem_embed" you want to subtract from feats:
-        self.no_mem_embed = sam_model.no_mem_embed
+        self.no_mem_embed = sam_model.no_mem_embed  # if your model uses this
 
     @torch.no_grad()
     def forward(self,
-                current_vision_feat: torch.Tensor,      # e.g. [1,256,64,64]
-                current_vision_pos_embed: torch.Tensor, # e.g. [4096,1,256]
-                memory_0: torch.Tensor,                 # e.g. [num_obj_ptr,256]
-                memory_1: torch.Tensor,                 # e.g. [n,64,64,64]
-                memory_pos_embed: torch.Tensor          # e.g. [N,1,64]
+                current_vision_feat: torch.Tensor,      # [1,256,64,64]
+                current_vision_pos_embed: torch.Tensor, # [4096,1,256]
+                memory_0: torch.Tensor,                 # [num_obj_ptr,256]
+                memory_1: torch.Tensor,                 # [n,64,64,64]
+                memory_pos_embed: torch.Tensor          # [N,1,64]
                ) -> torch.Tensor:
         """
-        Returns a fused feature shaped like [1,256,64,64].
-
-        Typical usage in multi-frame context:
-          1) Flatten current_vision_feat from [1,256,64,64] -> [H*W, B=1, C=256].
-          2) Subtract no_mem_embed if your SAM2 code does that.
-          3) memory_0 is object ptr tokens, memory_1 is spatial memory, etc.
-          4) Cat them => memory
-          5) Pass memory & memory_pos_embed to self.memory_attention(...)
-          6) Reshape result back to [1,256,64,64].
+        Returns fused feature shaped like [1,256,64,64].
         """
 
-        # 1) Flatten the current_vision_feat from (B,C,H,W) -> (H*W, B, C).
-        B, C, H, W = current_vision_feat.shape  # e.g. [1,256,64,64]
-        feat_hwbc = current_vision_feat.permute(2, 3, 0, 1).reshape(H*W, B, C)
-        # Optionally subtract no_mem_embed:
-        feat_hwbc = feat_hwbc - self.no_mem_embed  # if your model requires that
+        # current_vision_feat is (B=1, C=256, H=64, W=64).
+        B, C, H, W = current_vision_feat.shape
 
-        # 2) Prepare memory_0 (object ptr tokens).
-        #    Suppose memory_0 is shape [num_obj_ptr, 256].
-        #    If each object pointer is 4 tokens or something, you might do:
-        #       memory_0 -> memory_0.view(-1,1,4,64).flatten(0,1), etc.
-        #    The code below is just an example. Adapt to your actual design:
-        # E.g. if each object pointer is 4 tokens, we do something like:
+        # Flatten from (B,C,H,W) => (HW,B,C).
+        # This is one permute+reshape step:
+        feat_hwbc = current_vision_feat.permute(2, 3, 0, 1).reshape(H * W, B, C)
+
+        # Subtract no_mem_embed if required:
+        feat_hwbc = feat_hwbc - self.no_mem_embed
+
+        # memory_0 => shape [num_obj_ptr, 256]. Suppose each pointer is 4 tokens of dim 64 => total 256.
+        # If you do something like:
+        #   memory_0.reshape(-1,1,4,64) -> (num_obj_ptr, 1, 4, 64)
+        #   permute/flatten => (num_obj_ptr*4, 1, 64)
+        # We'll do fewer steps in a single chain:
         num_obj_ptr = memory_0.shape[0]
+        memory_0 = memory_0.reshape(num_obj_ptr, 4, 64)    # [num_obj_ptr, 4, 64]
+        memory_0 = memory_0.unsqueeze(1)                   # => [num_obj_ptr, 1, 4, 64]
+        memory_0 = memory_0.permute(0, 2, 1, 3)            # => [num_obj_ptr, 4, 1, 64]
+        memory_0 = memory_0.reshape(num_obj_ptr * 4, 1, 64)# => [num_obj_ptr*4, 1, 64]
 
-        memory_0 = memory_0.reshape(-1,1,4,64)
-        memory_0 = memory_0.permute(0, 2, 1, 3).flatten(0, 1)
-        # -> shape [num_obj_ptr * 4, 1, 64]
+        # memory_1 => shape [n, 64, 64, 64].
+        # Flatten => (n, 64, 4096) => permute => (n, 4096, 64) => reshape => (n*4096,1,64).
+        mem_1_n = memory_1.shape[0]   # n frames
+        memory_1 = memory_1.reshape(mem_1_n, 64, 64*64)  # [n, 64, 4096]
+        memory_1 = memory_1.permute(0, 2, 1)             # [n, 4096, 64]
+        memory_1 = memory_1.reshape(-1, 1, 64)           # [n*4096, 1, 64]
 
-        memory_1 = memory_1.view(-1,64,64*64).permute(0,2,1)
-        memory_1 = memory_1.reshape(-1,1,64)
-        # -> shape [some_spatial_len, 1, 64]
-
+        # Concat memory_1 + memory_0 => shape [n*4096 + num_obj_ptr*4, 1, 64]
         memory = torch.cat((memory_1, memory_0), dim=0)
 
-        # 5) num_obj_ptr_tokens must tell memory_attention how many tokens are from object ptr:
-        #    if we repeated each pointer 4 times, then total obj tokens= (num_obj_ptr*4).
-        #    memory_1 had (n*4096) rows, so total memory rows= (n*4096 + num_obj_ptr*4).
-        #    Typically we pass that as an int:
+        # num_obj_ptr_tokens is how many pointer tokens we appended
         num_obj_ptr_tokens = num_obj_ptr * 4
 
-        # 6) Finally call memory_attention:
+        # Forward memory_attention => fused_hwbc shape [HW,B,C]
         fused_hwbc = self.memory_attention(
-            curr=feat_hwbc,  # [HW,B,C]
+            curr=feat_hwbc,
             curr_pos=current_vision_pos_embed,  # [HW,B,C]
             memory=memory,
-            memory_pos=memory_pos_embed,  # [some_len,1,64], etc.
+            memory_pos=memory_pos_embed,        # [some_len,1,64], etc.
             num_obj_ptr_tokens=num_obj_ptr_tokens
         )
-        # The output fused_hwbc is shape [HW,B,C].
 
-        # 7) Reshape it back to [B,C,H,W].
-        fused_bcHW = fused_hwbc.permute(1,2,0).view(B, C, H, W)
+        # Reshape back to (B,C,H,W)
+        fused_bcHW = fused_hwbc.permute(1, 2, 0).reshape(B, C, H, W)
         return fused_bcHW
+
 
 class MemEncoder(nn.Module):
     def __init__(self, sam_model: SAM2Base) -> None:
@@ -193,13 +205,11 @@ class MemEncoder(nn.Module):
                 mask_for_mem: torch.Tensor,  # [1,1,1024,1024]
                 pix_feat: torch.Tensor       # [1,256,64,64]
                ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # Get the shape of the input feature.
-        B, C, H, W = pix_feat.shape
         # Flatten pix_feat from [B, C, H, W] to [H*W, B, C]
+        B, C, H, W = pix_feat.shape
         flattened = pix_feat.view(B, C, H * W).permute(2, 0, 1)
-        
+
         # Create a placeholder for object_score_logits.
-        # For instance, if we have a single score per batch element:
         object_score_logits = torch.zeros(1, 1, device=pix_feat.device)
         
         # Pass a list containing the flattened feature.
@@ -211,9 +221,9 @@ class MemEncoder(nn.Module):
             is_mask_from_pts=True,
         )
         
-        # Since maskmem_pos_enc is a list, we choose (for example) the last tensor.
+        # Suppose we pick the last pos_enc
         maskmem_pos_enc_tensor = maskmem_pos_enc[-1]
-        # Reshape it if needed. Here we assume the tensor shape is compatible with [1, 64, H*W].
+        # e.g. shape => [1, 64, H*W], then permute => [H*W,1,64]
         maskmem_pos_enc_tensor = maskmem_pos_enc_tensor.view(1, 64, H * W).permute(2, 0, 1)
         
         return maskmem_features, maskmem_pos_enc_tensor, self.maskmem_tpos_enc
