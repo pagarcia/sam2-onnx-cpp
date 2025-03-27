@@ -26,8 +26,8 @@ struct AppState {
 static cv::Mat overlayMask(const cv::Mat& img, const cv::Mat& mask) {
     cv::Mat overlay;
     img.copyTo(overlay);
-    cv::Mat redLayer(img.size(), img.type(), cv::Scalar(0, 0, 255));
-    redLayer.copyTo(overlay, mask);
+    cv::Mat greenLayer(img.size(), img.type(), cv::Scalar(0, 255, 0));
+    greenLayer.copyTo(overlay, mask);
     cv::Mat blended;
     cv::addWeighted(img, 0.7, overlay, 0.3, 0, blended);
     return blended;
@@ -125,10 +125,15 @@ int runOnnxTestImage()
     }
     cv::Mat resized;
     cv::resize(state.originalImage, resized, state.inputSize);
+
+    auto preStart = high_resolution_clock::now();
     if(!state.sam.preprocessImage(resized)){
         cerr << "[ERROR] preprocessImage failed.\n";
         return -1;
     }
+    auto preEnd = high_resolution_clock::now();
+    auto preMs = duration_cast<milliseconds>(preEnd - preStart).count();
+    cout << "[INFO] preprocessImage (encoding) took " << preMs << " ms." << endl;
 
     // 4) Setup the display
     state.originalImage.copyTo(state.displayImage);
