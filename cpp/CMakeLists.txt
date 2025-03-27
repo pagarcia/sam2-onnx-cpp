@@ -61,6 +61,7 @@ endif()
 add_executable(${TARGET_NAME}
     src/main.cpp
     src/onnx_test_image.cpp
+    src/onnx_test_video.cpp
     src/SAM2.cpp
     ${OPENFILEDIALOG_SRC}
 )
