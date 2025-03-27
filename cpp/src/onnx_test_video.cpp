@@ -6,6 +6,7 @@
 #include <thread>
 #include <chrono>
 #include <opencv2/opencv.hpp>
+#include <onnxruntime_cxx_api.h> // for GetAvailableProviders()
 #include "SAM2.h"
 
 static void printVideoUsage(const char* argv0)
@@ -19,25 +20,26 @@ static void printVideoUsage(const char* argv0)
               << " --memenc <memory_encoder.onnx>"
               << " --video <sample.mkv>\n\n"
               << "Optional arguments:\n"
-              << "  --threads <N>            Number of CPU threads\n"
-              << "  --device  <cpu|cuda:X>   Device name (default=cpu)\n"
-              << "  --max_frames <N>         0 => process all frames.\n\n";
+              << "  --threads <N>           Number of CPU threads\n"
+              << "  --max_frames <N>        0 => process all frames.\n\n"
+              << "Note: This version attempts GPU if CUDA is available,\n"
+              << "      else falls back to CPU, ignoring any --device.\n"
+              << std::endl;
 }
 
 /**
- * Renamed function to match the main.cpp usage:
- *   int runOnnxTestVideo(int argc, char** argv)
+ * Modified function that attempts GPU first if CUDA is present
+ * (like onnx_test_image.cpp), then falls back to CPU.
  */
 int runOnnxTestVideo(int argc, char** argv)
 {
     // 1) Default arguments
-    std::string encoderPath     = "image_encoder.onnx";
-    std::string decoderPath     = "image_decoder.onnx";
-    std::string memAttentionPath= "memory_attention.onnx";
-    std::string memEncoderPath  = "memory_encoder.onnx";
-    std::string videoPath       = "sample_960x540.mkv";
-    std::string device          = "cpu";
-    int maxFrames               = 10;  // 0 => no limit
+    std::string encoderPath      = "image_encoder.onnx";
+    std::string decoderPath      = "image_decoder.onnx";
+    std::string memAttentionPath = "memory_attention.onnx";
+    std::string memEncoderPath   = "memory_encoder.onnx";
+    std::string videoPath        = "sample_960x540.mkv";
+    int maxFrames                = 0;  // 0 => no limit
 
     // Use hardware concurrency or fallback
     int threadsNumber = static_cast<int>(std::thread::hardware_concurrency());
@@ -61,8 +63,6 @@ int runOnnxTestVideo(int argc, char** argv)
             videoPath = argv[++i];
         } else if ((arg == "--threads") && (i + 1 < argc)) {
             threadsNumber = std::stoi(argv[++i]);
-        } else if ((arg == "--device") && (i + 1 < argc)) {
-            device = argv[++i];
         } else if ((arg == "--max_frames") && (i + 1 < argc)) {
             maxFrames = std::stoi(argv[++i]);
         } else if ((arg == "--help") || (arg == "-h")) {
@@ -71,33 +71,88 @@ int runOnnxTestVideo(int argc, char** argv)
         }
     }
 
-    // 3) Print final settings
+    // 3) Print providers
+    {
+        auto allProviders = Ort::GetAvailableProviders();
+        std::cout << "[INFO] ONNX Runtime was built with these providers:\n";
+        for (auto &prov : allProviders) {
+            std::cout << "       " << prov << "\n";
+        }
+        std::cout << std::endl;
+    }
+
+    // 4) Print the final settings (minus device, since we autodetect)
     std::cout << "[INFO] Using:\n"
               << "  encoder        = " << encoderPath << "\n"
               << "  decoder        = " << decoderPath << "\n"
               << "  memAttention   = " << memAttentionPath << "\n"
               << "  memEncoder     = " << memEncoderPath << "\n"
               << "  video          = " << videoPath << "\n"
-              << "  device         = " << device << "\n"
               << "  max_frames     = " << maxFrames << "\n"
               << "  threads        = " << threadsNumber << "\n\n";
 
-    // 4) Initialize SAM2 in video mode
-    SAM2 sam;
-    if (!sam.initializeVideo(
-            encoderPath,
-            decoderPath,
-            memAttentionPath,
-            memEncoderPath,
-            threadsNumber,
-            device))
+    // 5) Decide if CUDA is available
+    bool cudaAvailable = false;
     {
-        std::cerr << "[ERROR] Could not initialize SAM2 in video mode.\n";
-        printVideoUsage(argv[0]);
-        return 1;
+        auto allProviders = Ort::GetAvailableProviders();
+        for (auto &p: allProviders) {
+            if (p == "CUDAExecutionProvider") {
+                cudaAvailable = true;
+                break;
+            }
+        }
     }
 
-    // 5) Open the video
+    // 6) Create SAM2, attempt GPU => fallback to CPU
+    SAM2 sam;
+    bool initOk = false;
+    bool usedGPU = false;
+
+    if (cudaAvailable) {
+        std::cout << "[INFO] Attempting GPU session (cuda:0)...\n";
+        try {
+            if (sam.initializeVideo(
+                    encoderPath, decoderPath,
+                    memAttentionPath, memEncoderPath,
+                    threadsNumber, "cuda:0"))
+            {
+                std::cout << "[INFO] GPU session successfully created!\n";
+                initOk = true;
+                usedGPU = true;
+            } else {
+                std::cout << "[WARN] GPU session returned false => fallback to CPU.\n";
+            }
+        }
+        catch (const std::exception &e) {
+            std::cerr << "[WARN] GPU init exception => " << e.what() << "\n";
+        }
+    } else {
+        std::cout << "[INFO] No CUDAExecutionProvider found; will use CPU.\n";
+    }
+
+    if (!initOk) {
+        std::cout << "[INFO] Initializing CPU session...\n";
+        if(!sam.initializeVideo(
+                encoderPath, decoderPath,
+                memAttentionPath, memEncoderPath,
+                threadsNumber, "cpu"))
+        {
+            std::cerr << "[ERROR] Could not init SAM2 with CPU.\n";
+            printVideoUsage(argv[0]);
+            return 1;
+        }
+        initOk = true;
+        usedGPU = false;
+    }
+
+    // 7) Summarize device
+    if (usedGPU) {
+        std::cout << "[INFO] *** GPU inference is in use ***" << std::endl;
+    } else {
+        std::cout << "[INFO] *** CPU inference is in use ***" << std::endl;
+    }
+
+    // 8) Open the video
     cv::VideoCapture cap(videoPath);
     if (!cap.isOpened()) {
         std::cerr << "[ERROR] Could not open video: " << videoPath << "\n";
@@ -113,7 +168,7 @@ int runOnnxTestVideo(int argc, char** argv)
               << ", fps=" << fps
               << ", frames=" << totalFrames << "\n\n";
 
-    // 6) Output video => <basename>_mask_overlay.avi
+    // 9) Output video => <basename>_mask_overlay.avi
     std::string baseName = videoPath;
     {
         // strip directory
@@ -137,12 +192,12 @@ int runOnnxTestVideo(int argc, char** argv)
     }
     std::cout << "[INFO] Writing overlay => " << outVideoPath << "\n";
 
-    // 7) Hard-coded single user prompt on the first frame
+    // 10) Hard-coded single user prompt on the first frame
     Prompts userPrompt;
-    userPrompt.points.push_back(cv::Point(510, 375)); 
-    userPrompt.pointLabels.push_back(1);  // label=1 => foreground
+    userPrompt.points.push_back(cv::Point(510, 375));
+    userPrompt.pointLabels.push_back(1); // label=1 => foreground
 
-    // 8) Loop over frames
+    // 11) Loop over frames
     int frameIndex = 0;
     auto globalStart = std::chrono::steady_clock::now();
 
