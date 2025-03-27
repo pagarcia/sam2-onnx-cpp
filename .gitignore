@@ -45,3 +45,15 @@ __pycache__/
 
 # Python Tools for Visual Studio (PTVS)
 *.pyc
+
+# Some VS Code settings
+*.vscode
+
+# ONNX Models
+*.onnx
+
+# Build Directories
+/build_release/
+**/build_release/
+ /build_debug/
+**/build_debug/
