@@ -58,7 +58,7 @@ Follow these steps after cloning the repository:
    - `memory_attention_small.onnx`
    - `memory_encoder_small.onnx`
 
-4. **Run tests**
+4. **Run Python tests**
 
    To run the tests you will need to install additional libraries:
    ```bash
