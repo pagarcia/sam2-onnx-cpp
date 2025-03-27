@@ -1,5 +1,4 @@
 // onnx_test_image.cpp
-
 #include "openFileDialog.h"
 #include <onnxruntime_cxx_api.h>  // for GetAvailableProviders()
 #include <opencv2/opencv.hpp>
@@ -41,7 +40,7 @@ static void updateDisplay(AppState* state) {
     } else {
         // Build a Prompts struct from the user’s clickedPoints
         Prompts prompts;
-        prompts.points = state->clickedPoints;  // in original coords
+        prompts.points      = state->clickedPoints;  // in original coords
         prompts.pointLabels = state->pointLabels;
 
         // setPrompts => scales + stores
@@ -106,8 +105,15 @@ int runOnnxTestImage()
         }
     }
 
-    // 2) Let user select an image
-    string imagePath = openFileDialog();
+    // 2) Let user select an image with a custom filter + title
+    // This filter must be wide-string, double-null-terminated on Windows:
+    const wchar_t* imageFilter = 
+        L"Image Files\0*.jpg;*.jpeg;*.png;*.bmp\0All Files\0*.*\0";
+
+    const wchar_t* dialogTitle = L"Select an Image File";
+
+    std::string imagePath = openFileDialog(imageFilter, dialogTitle);
+
     if (imagePath.empty()) {
         // If user canceled, fallback to a default
         imagePath = "sample.jpg";
@@ -119,7 +125,7 @@ int runOnnxTestImage()
     }
     state.imageSize = state.originalImage.size();
 
-    // 3) Decide if GPU is even worth trying by checking for "CUDAExecutionProvider"
+    // 3) Check for GPU availability
     bool cudaAvailable = false;
     {
         auto allProviders = Ort::GetAvailableProviders();
@@ -169,14 +175,14 @@ int runOnnxTestImage()
         usedGPU = false;
     }
 
-    // Just print a final message:
+    // 5) Summarize device:
     if (usedGPU) {
         cout << "[INFO] *** GPU inference is in use ***" << endl;
     } else {
         cout << "[INFO] *** CPU inference is in use ***" << endl;
     }
 
-    // 5) Resize to match the encoder input (e.g. 1024x1024)
+    // 6) Resize to match the encoder input (e.g. 1024x1024)
     state.inputSize = state.sam.getInputSize();
     if (state.inputSize.width <= 0 || state.inputSize.height <= 0) {
         cerr << "[ERROR] Invalid model input size.\n";
@@ -185,7 +191,7 @@ int runOnnxTestImage()
     cv::Mat resized;
     cv::resize(state.originalImage, resized, state.inputSize);
 
-    // 6) Preprocess => runs the "ImageEncoder" in your pipeline
+    // 7) Preprocess => runs the "ImageEncoder"
     auto preStart = high_resolution_clock::now();
     if (!state.sam.preprocessImage(resized)) {
         cerr << "[ERROR] preprocessImage failed.\n";
@@ -195,16 +201,16 @@ int runOnnxTestImage()
     auto preMs = duration_cast<milliseconds>(preEnd - preStart).count();
     cout << "[INFO] preprocessImage (encoding) took " << preMs << " ms." << endl;
 
-    // 7) Setup the display and run interactive segmentation
+    // 8) Interactive segmentation
     state.originalImage.copyTo(state.displayImage);
     cv::namedWindow("Interactive Segmentation");
     cv::imshow("Interactive Segmentation", state.displayImage);
     cv::setMouseCallback("Interactive Segmentation", onMouse, &state);
 
     cout << "[INFO] L-click=positive, R-click=negative, M-click=reset. ESC=exit.\n";
-    while(true){
+    while(true) {
         int key = cv::waitKey(50);
-        if(key == 27) { // ESC
+        if (key == 27) { // ESC
             break;
         }
     }
