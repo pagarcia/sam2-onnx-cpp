@@ -3,7 +3,7 @@
 #include <string>
 
 // Forward declarations
-int runOnnxTestImage(int argc, char** argv);     // updated
+int runOnnxTestImage(int argc, char** argv);
 int runOnnxTestVideo(int argc, char** argv);
 
 static void printMainUsage()
@@ -26,21 +26,25 @@ static void printMainUsage()
 
 int main(int argc, char** argv)
 {
+    // If no mode argument is provided, default to onnx_test_image
     if (argc < 2) {
-        std::cerr << "[ERROR] No mode specified.\n";
-        printMainUsage();
-        return 1;
+        // Create a new argv array with the program name and the --onnx_test_image mode
+        char* newArgv[2];
+        newArgv[0] = argv[0];                       // same program name
+        newArgv[1] = (char*)"--onnx_test_image";    // default mode
+        // Call runOnnxTestImage with these new arguments
+        return runOnnxTestImage(2, newArgv);
     }
 
+    // Otherwise, use the user-provided argument
     std::string modeArg = argv[1];
+
     if (modeArg == "--onnx_test_image")
     {
-        // Updated call with full CLI
         return runOnnxTestImage(argc, argv);
     }
     else if (modeArg == "--onnx_test_video")
     {
-        // New multi-frame video segmentation pipeline
         return runOnnxTestVideo(argc, argv);
     }
     else
