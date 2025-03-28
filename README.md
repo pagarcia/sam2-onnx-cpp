@@ -71,6 +71,27 @@ Follow these steps after cloning the repository:
    ```
    You can find short video samples in https://filesamples.com/formats/mkv and https://www.sample-videos.com/.
 
+5. **Compile test C++ wrapper**
+
+   Download and unzip https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-win-x64-gpu-1.20.0.zip
+   (at https://github.com/microsoft/onnxruntime/releases/tag/v1.20.0).
+   Create a `build_release` folder inside `cpp` folder.
+   In your `build_release` folder, run:
+   ```bash
+   cmake -G "Visual Studio 17 2022" -DCMAKE_CONFIGURATION_TYPES=Release -DOpenCV_DIR="C:/Program Files/OpenCV/Release" -DONNXRUNTIME_DIR="C:/Program Files/onnxruntime-win-x64-gpu-1.20.0" ..
+   ```
+   Each time you want to build, run:
+   ```bash
+   cmake --build . --config Release
+   ```
+   Go to bin/Release folder and run the executable with instructions:
+   ```bash
+   ./Segment.exe --onnx_test_image
+   ```
+   ```bash
+   ./Segment.exe --onnx_test_video
+   ```
+
 ## Project Structure
 
 ```
@@ -78,6 +99,9 @@ sam2-onnx-cpp/
 ├── export/
 │   ├── onnx_export.py      # Main ONNX export script
 │   └── src/                # Contains modules and utilities for ONNX export
+├── cpp/
+│   ├── CMakeLists.txt
+│   └── src/                # src code for C++ wrapper and tests
 ├── checkpoints/            # Contains SAM2 model weights (fetched via sparse bat script)
 ├── sam2/                   # Contains the SAM2 code (fetched via sparse checkout)
 ├── fetch_sparse.bat        # Batch file to fetch sparse checkout and download checkpoints
