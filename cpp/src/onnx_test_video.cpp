@@ -165,13 +165,13 @@ int runOnnxTestVideo(int argc, char** argv)
         const wchar_t* filter = L"Video Files\0*.mp4;*.mkv;*.avi;*.mov\0All Files\0*.*\0";
         const wchar_t* title  = L"Select a Video File";
         std::string chosen = openFileDialog(filter, title);
-        if(chosen.empty()){
-            std::cout<<"[WARN] No file => fallback to sample_960x540.mkv\n";
-            videoPath="sample_960x540.mkv";
+        if (chosen.empty()) {
+            std::cerr << "[ERROR] No file selected => aborting.\n";
+            return 1; // or an appropriate exit code
         } else {
-            videoPath=chosen;
+            videoPath = chosen;
         }
-    }
+    }    
 
     // ------------------------------------------------------------------
     // 2) Print all providers
@@ -402,32 +402,22 @@ int runOnnxTestVideo(int argc, char** argv)
             break;
         }
 
-        // overlay => red
-        cv::Mat colorMask(frameBGR.size(), CV_8UC3, cv::Scalar(0,0,0));
-        for(int r=0; r<colorMask.rows; r++){
-            const uchar* rowM = mask.ptr<uchar>(r);
-            cv::Vec3b* rowC   = colorMask.ptr<cv::Vec3b>(r);
-            for(int c=0; c<colorMask.cols; c++){
-                if(rowM[c]==255){
-                    rowC[c]= cv::Vec3b(0,0,255); // red
-                }
-            }
-        }
-        // if frameIndex=0 => draw seeds in yellow
-        if(frameIndex==0){
-            for(size_t i=0;i<st.points.size();i++){
-                cv::Point pt= st.points[i];
-                if(pt.x>=0 && pt.x<width && pt.y>=0 && pt.y<height){
-                    cv::circle(colorMask, pt, 4, cv::Scalar(0,255,255), -1);
-                }
+        // Use the same green overlay approach as the interactive frame
+        cv::Mat overlayed = overlayMask(frameBGR, mask);
+
+        // If frameIndex==0 => draw seeds => FG=red, BG=blue
+        if (frameIndex == 0) {
+            for (size_t i = 0; i < st.points.size(); i++) {
+                cv::Scalar color = (st.labels[i] == 1)
+                                    ? cv::Scalar(0, 0, 255)    // foreground => red
+                                    : cv::Scalar(255, 0, 0);   // background => blue
+                cv::circle(overlayed, st.points[i], 5, color, -1);
             }
         }
 
-        cv::Mat overlay;
-        float alpha=0.5f;
-        cv::addWeighted(frameBGR,1.0,colorMask,alpha,0.0, overlay);
+        // Write the final overlay
+        writer << overlayed;
 
-        writer<<overlay;
         frameIndex++;
     }
 
