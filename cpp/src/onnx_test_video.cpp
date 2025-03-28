@@ -405,16 +405,6 @@ int runOnnxTestVideo(int argc, char** argv)
         // Use the same green overlay approach as the interactive frame
         cv::Mat overlayed = overlayMask(frameBGR, mask);
 
-        // If frameIndex==0 => draw seeds => FG=red, BG=blue
-        if (frameIndex == 0) {
-            for (size_t i = 0; i < st.points.size(); i++) {
-                cv::Scalar color = (st.labels[i] == 1)
-                                    ? cv::Scalar(0, 0, 255)    // foreground => red
-                                    : cv::Scalar(255, 0, 0);   // background => blue
-                cv::circle(overlayed, st.points[i], 5, color, -1);
-            }
-        }
-
         // Write the final overlay
         writer << overlayed;
 
