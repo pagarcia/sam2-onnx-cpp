@@ -57,3 +57,6 @@ __pycache__/
 **/build_release/
  /build_debug/
 **/build_debug/
+
+# MacOS related files
+*.DS_Store
