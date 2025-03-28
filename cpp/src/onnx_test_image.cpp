@@ -92,32 +92,75 @@ static void onMouse(int event, int x, int y, int, void* userdata) {
     updateDisplay(state);
 }
 
-int runOnnxTestImage()
+// ----------------------------------------------------------------------------
+//  RUN ONNX TEST IMAGE   (updated to parse CLI for --image, --encoder, --decoder, --threads )
+// ----------------------------------------------------------------------------
+int runOnnxTestImage(int argc, char** argv)
 {
-    AppState state;
+    // ---------------------------
+    // 1) Parse CLI arguments
+    // ---------------------------
+    std::string encoderPath = "image_encoder.onnx";
+    std::string decoderPath = "image_decoder.onnx";
+    std::string imagePath;  // empty => file dialog
+    int threads = (int)std::thread::hardware_concurrency();
+    if (threads <= 0) threads = 4;
 
-    // 1) Print all providers that ONNX Runtime was built with
+    for(int i=2; i<argc; i++){ 
+        // i=2 if your main has "Segment --onnx_test_image" as first 2
+        std::string arg = argv[i];
+        if(arg == "--encoder" && i+1<argc) {
+            encoderPath = argv[++i];
+        } else if(arg == "--decoder" && i+1<argc) {
+            decoderPath = argv[++i];
+        } else if(arg == "--image" && i+1<argc) {
+            imagePath = argv[++i];
+        } else if(arg == "--threads" && i+1<argc) {
+            threads = std::stoi(argv[++i]);
+        } else if(arg == "--help" || arg == "-h") {
+            cout << "\nUsage:\n"
+                 << "  Segment --onnx_test_image [--encoder E.onnx] [--decoder D.onnx] [--image myimage.jpg] [--threads N]\n\n"
+                 << "Notes:\n"
+                 << "  * If --image is not specified, a file dialog opens.\n"
+                 << "  * GPU if CUDA is available, otherwise CPU.\n"
+                 << "  * L-click=foreground, R-click=background, M-click=reset. ESC=exit.\n"
+                 << endl;
+            return 0;
+        }
+    }
+
+    // If no --image => open file dialog
+    if(imagePath.empty()) {
+        cout << "[INFO] No image => opening file dialog...\n";
+        const wchar_t* filter = L"Image Files\0*.jpg;*.jpeg;*.png;*.bmp\0All Files\0*.*\0";
+        const wchar_t* title  = L"Select an Image File";
+        std::string chosen = openFileDialog(filter, title);
+        if(chosen.empty()) {
+            cerr << "[ERROR] No file selected => abort.\n";
+            return 1;
+        } else {
+            imagePath = chosen;
+        }
+    }
+
+    // 2) Print all providers
     {
         auto allProviders = Ort::GetAvailableProviders();
         cout << "[INFO] ONNX Runtime was built with support for these providers:\n";
         for (auto &prov : allProviders) {
             cout << "      " << prov << "\n";
         }
+        cout << endl;
     }
 
-    // 2) Let user select an image with a custom filter + title
-    // This filter must be wide-string, double-null-terminated on Windows:
-    const wchar_t* imageFilter = 
-        L"Image Files\0*.jpg;*.jpeg;*.png;*.bmp\0All Files\0*.*\0";
+    cout << "[INFO] Using:\n"
+         << "   encoder  = " << encoderPath << "\n"
+         << "   decoder  = " << decoderPath << "\n"
+         << "   image    = " << imagePath << "\n"
+         << "   threads  = " << threads << "\n\n";
 
-    const wchar_t* dialogTitle = L"Select an Image File";
-
-    std::string imagePath = openFileDialog(imageFilter, dialogTitle);
-
-    if (imagePath.empty()) {
-        // If user canceled, fallback to a default
-        imagePath = "sample.jpg";
-    }
+    // 3) Load the image
+    AppState state;
     state.originalImage = cv::imread(imagePath);
     if (state.originalImage.empty()) {
         cerr << "[ERROR] Could not load image from " << imagePath << endl;
@@ -125,7 +168,7 @@ int runOnnxTestImage()
     }
     state.imageSize = state.originalImage.size();
 
-    // 3) Check for GPU availability
+    // 4) Check for GPU availability
     bool cudaAvailable = false;
     {
         auto allProviders = Ort::GetAvailableProviders();
@@ -137,15 +180,10 @@ int runOnnxTestImage()
         }
     }
 
-    // 4) Use the default ONNX model paths
-    string encoderPath = "image_encoder.onnx";
-    string decoderPath = "image_decoder.onnx";
-    int threads = (int)std::thread::hardware_concurrency();
-
     bool initOk = false;
     bool usedGPU = false;
 
-    // If we see that "CUDAExecutionProvider" is available, try "cuda:0"
+    // 5) Try GPU => fallback CPU
     if (cudaAvailable) {
         cout << "[INFO] Attempting to initialize GPU session (cuda:0)...\n";
         try {
@@ -161,11 +199,10 @@ int runOnnxTestImage()
             cerr << "[WARN] GPU init exception: " << e.what() << "\n";
         }
     } else {
-        cout << "[INFO] CUDAExecutionProvider not found in this ORT build. Will use CPU.\n";
+        cout << "[INFO] CUDAExecutionProvider not found => using CPU.\n";
     }
 
-    // If GPU init wasn't done, fallback to CPU
-    if (!initOk) {
+    if(!initOk) {
         cout << "[INFO] Initializing CPU session...\n";
         if(!state.sam.initialize(encoderPath, decoderPath, threads, "cpu")) {
             cerr << "[ERROR] Could not init SAM2 with CPU.\n";
@@ -175,12 +212,8 @@ int runOnnxTestImage()
         usedGPU = false;
     }
 
-    // 5) Summarize device:
-    if (usedGPU) {
-        cout << "[INFO] *** GPU inference is in use ***" << endl;
-    } else {
-        cout << "[INFO] *** CPU inference is in use ***" << endl;
-    }
+    if(usedGPU) cout << "[INFO] *** GPU inference is in use ***\n\n";
+    else        cout << "[INFO] *** CPU inference is in use ***\n\n";
 
     // 6) Resize to match the encoder input (e.g. 1024x1024)
     state.inputSize = state.sam.getInputSize();
@@ -188,6 +221,7 @@ int runOnnxTestImage()
         cerr << "[ERROR] Invalid model input size.\n";
         return -1;
     }
+
     cv::Mat resized;
     cv::resize(state.originalImage, resized, state.inputSize);
 
@@ -199,7 +233,7 @@ int runOnnxTestImage()
     }
     auto preEnd = high_resolution_clock::now();
     auto preMs = duration_cast<milliseconds>(preEnd - preStart).count();
-    cout << "[INFO] preprocessImage (encoding) took " << preMs << " ms." << endl;
+    cout << "[INFO] preprocessImage (encoding) took " << preMs << " ms.\n\n";
 
     // 8) Interactive segmentation
     state.originalImage.copyTo(state.displayImage);
@@ -208,6 +242,7 @@ int runOnnxTestImage()
     cv::setMouseCallback("Interactive Segmentation", onMouse, &state);
 
     cout << "[INFO] L-click=positive, R-click=negative, M-click=reset. ESC=exit.\n";
+
     while(true) {
         int key = cv::waitKey(50);
         if (key == 27) { // ESC
