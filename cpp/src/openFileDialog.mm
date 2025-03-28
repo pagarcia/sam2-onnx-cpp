@@ -45,9 +45,7 @@ static std::vector<std::string> parseExtensions(const std::wstring &patternLine)
     // We'll split by ';', remove "*." prefix, keep the extension part
     std::vector<std::string> exts;
 
-    // Convert wide -> std::string (UTF-8) for easier splitting
-    // But we can do splitting in wide if we prefer. 
-    // Let's do wide splitting.
+    // We'll do wide splitting on ';'
     std::wstring delim = L";";
     size_t start = 0;
     while (true) {
@@ -56,7 +54,6 @@ static std::vector<std::string> parseExtensions(const std::wstring &patternLine)
             ? patternLine.substr(start)
             : patternLine.substr(start, pos - start);
 
-        // trim any whitespace (optional)
         // remove leading "*." if present
         if (token.size() > 2 && token[0] == L'*' && token[1] == L'.') {
             token = token.substr(2); // skip "*."
@@ -66,15 +63,12 @@ static std::vector<std::string> parseExtensions(const std::wstring &patternLine)
             token = token.substr(1);
         }
 
-        // convert to UTF-8
+        // convert wide -> UTF-8
         if (!token.empty()) {
-            // Note: might contain wildcard leftover if user typed something else
-            // but typically it's just e.g. "jpg" or "png"
             int needed = (int)wcstombs(nullptr, token.c_str(), 0);
             if (needed > 0) {
                 std::string ext(needed, '\0');
                 wcstombs(&ext[0], token.c_str(), needed+1);
-                // lower-case it? e.g. ext = toLowerCase(ext);
                 exts.push_back(ext);
             }
         }
@@ -91,7 +85,9 @@ static std::vector<std::string> parseExtensions(const std::wstring &patternLine)
  * openFileDialog(...) on macOS with custom filter and title.
  *
  * Filter is a double-null-terminated wide string. We'll parse it similarly
- * to Windows, but on mac we build an NSArray of file extensions for [panel setAllowedFileTypes:].
+ * to Windows, but on mac we build an NSArray of file extensions for 
+ * [panel setAllowedFileTypes:]. This method is deprecated on macOS 12+,
+ * but still functional. 
  */
 std::string openFileDialog(const wchar_t* filter,
                            const wchar_t* title)
@@ -103,10 +99,23 @@ std::string openFileDialog(const wchar_t* filter,
         [panel setAllowsMultipleSelection:NO];
         [panel setResolvesAliases:YES];
 
-        // Convert 'title' to NSString
+        // Convert 'title' (wchar_t*) => UTF-8 => NSString
         if (title) {
-            NSString* nsTitle = [NSString stringWithCharacters:title length:wcslen(title)];
-            [panel setTitle:nsTitle];
+            size_t wideLen = wcslen(title);
+            if (wideLen == 0) {
+                [panel setTitle:@"Open File"];
+            } else {
+                size_t utf8Size = wcstombs(nullptr, title, 0);
+                if (utf8Size == (size_t)-1) {
+                    // fallback
+                    [panel setTitle:@"Open File"];
+                } else {
+                    std::vector<char> buf(utf8Size + 1, 0);
+                    wcstombs(buf.data(), title, utf8Size + 1);
+                    NSString* nsTitle = [NSString stringWithUTF8String:buf.data()];
+                    [panel setTitle:nsTitle];
+                }
+            }
         } else {
             [panel setTitle:@"Open File"];
         }
@@ -115,7 +124,7 @@ std::string openFileDialog(const wchar_t* filter,
         std::vector<std::wstring> segments = splitDoubleNullTerminated(filter);
         // Typically we have pairs of (description, patternLine).
         // We'll gather all extensions in a single list for allowedFileTypes.
-        // If we find "*.*", we might interpret that as "All Files" => don't restrict.
+        // If we find "*.*", interpret as "All Files" => no restriction.
 
         NSMutableSet<NSString*>* extensionSet = [NSMutableSet set];
 
@@ -123,28 +132,27 @@ std::string openFileDialog(const wchar_t* filter,
             // segments[i]   => description (e.g. "Image Files")
             // segments[i+1] => patternLine (e.g. "*.jpg;*.png;*.bmp")
             std::wstring patternLine = segments[i+1];
-            // check if it's "*.*" => that means "All Files"
             if (patternLine.find(L"*.*") != std::wstring::npos) {
-                // Means "All Files" => we can skip setting allowedFileTypes,
-                // or we handle it specially. For now, skip => user can open anything.
-                extensionSet = nil; // nil => no restriction
+                // Means "All Files" => skip any restriction
+                extensionSet = nil;
                 break;
             }
 
             // otherwise parse
             std::vector<std::string> exts = parseExtensions(patternLine);
             for (auto &e : exts) {
-                // e might be "jpg" or "png" etc.
                 NSString* nsExt = [NSString stringWithUTF8String:e.c_str()];
                 [extensionSet addObject:nsExt];
             }
         }
 
+        // setAllowedFileTypes is deprecated in macOS 12+,
+        // but works for older versions. We'll silence the warning:
         if (extensionSet != nil && extensionSet.count > 0) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
             [panel setAllowedFileTypes:[extensionSet allObjects]];
-        } else {
-            // means "All Files" or empty => no restriction
-            // [panel setAllowedFileTypes:nil];
+#pragma clang diagnostic pop
         }
 
         NSInteger result = [panel runModal];
