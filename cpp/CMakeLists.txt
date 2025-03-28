@@ -98,27 +98,33 @@ endif()
 #
 # 5) Installation & Packaging
 #
+# ----------------------------------------------------------------------------
+#  Mac-Specific Installation Changes
+# ----------------------------------------------------------------------------
+
 if(APPLE)
-  install(
-    TARGETS ${TARGET_NAME}
-    BUNDLE DESTINATION .
-    RUNTIME DESTINATION bin
+  install(TARGETS ${TARGET_NAME}
+          BUNDLE DESTINATION .
+          RUNTIME DESTINATION bin
+  )
+  
+  # Instead of installing models/ into Contents/Resources, install them into
+  # Contents/MacOS. That way "image_encoder.onnx" is side-by-side with
+  # the 'Segment' (or '2D_Segmenter') binary.
+  install(DIRECTORY "${CMAKE_SOURCE_DIR}/models/"
+          DESTINATION "${TARGET_NAME}.app/Contents/MacOS"
   )
 
-  install(
-    DIRECTORY "${CMAKE_SOURCE_DIR}/models/"
-    DESTINATION ${TARGET_NAME}.app/Contents/Resources
+  # Copy the ONNX Runtime .dylib into Contents/Frameworks
+  install(FILES "${ONNXRUNTIME_DIR}/lib/libonnxruntime.1.20.0.dylib"
+          DESTINATION "${TARGET_NAME}.app/Contents/Frameworks"
   )
 
-  install(
-    FILES "${ONNXRUNTIME_DIR}/lib/libonnxruntime.1.20.0.dylib"
-    DESTINATION ${TARGET_NAME}.app/Contents/Frameworks
-  )
-
+  # CPack config for creating a DMG, etc.
   include(InstallRequiredSystemLibraries)
   set(CPACK_PACKAGE_NAME "SAM2_ONNX")
   set(CPACK_PACKAGE_VERSION "1.0.0")
-  set(CPACK_GENERATOR "DragNDrop") # Creates a DMG
+  set(CPACK_GENERATOR "DragNDrop")  # Creates a DMG
   include(CPack)
 
 else()
