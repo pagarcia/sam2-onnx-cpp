@@ -322,18 +322,35 @@ int runOnnxTestVideo(int argc, char** argv)
     cap.set(cv::CAP_PROP_POS_FRAMES, 0);
 
     // Output .avi => e.g. "myvideo_mask_overlay.avi"
-    std::string baseName= videoPath;
+    // 1) First, extract the directory from videoPath
+    std::string inputDir;
     {
-        size_t pos= baseName.find_last_of("/\\");
-        if(pos!=std::string::npos){
-            baseName= baseName.substr(pos+1);
-        }
-        pos=baseName.find_last_of('.');
-        if(pos!=std::string::npos){
-            baseName= baseName.substr(0,pos);
+        size_t slashPos = videoPath.find_last_of("/\\");
+        if (slashPos == std::string::npos) {
+            // No slash found => the video is in the current directory
+            inputDir = ".";
+        } else {
+            // Extract everything up to (but not including) the slash
+            inputDir = videoPath.substr(0, slashPos);
         }
     }
-    std::string outVideo = baseName + "_mask_overlay.avi";
+
+    // 2) Then, extract the filename stem (no directory, no extension)
+    std::string baseName = videoPath;
+    {
+        size_t pos = baseName.find_last_of("/\\");
+        if(pos != std::string::npos) {
+            baseName = baseName.substr(pos+1); // remove any leading path
+        }
+        pos = baseName.find_last_of('.');
+        if(pos != std::string::npos) {
+            baseName = baseName.substr(0, pos); // remove extension
+        }
+    }
+
+    // 3) Finally, combine them, ensuring we put the output in inputDir
+    std::string outVideo = inputDir + "/" + baseName + "_mask_overlay.avi";
+
     int fourcc= cv::VideoWriter::fourcc('M','J','P','G');
     cv::VideoWriter writer(outVideo, fourcc, fps, cv::Size(width,height));
     if(!writer.isOpened()){
