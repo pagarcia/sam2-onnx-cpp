@@ -28,6 +28,12 @@ Follow these steps after cloning the repository:
    fetch_sparse.bat
    ```
 
+   On Mac:
+   ```batch
+   chmod +x fetch_sparse.sh
+   ./fetch_sparse.sh
+   ```
+
 2. **Create a Python Virtual Environment**
 
    In the repository root, run:
@@ -37,6 +43,12 @@ Follow these steps after cloning the repository:
    Then, activate the virtual environment (for Windows):
    ```bash
    sam2_env\Scripts\activate
+   ```
+
+   On Mac:
+   ```bash
+   python3 -m venv sam2_env
+   source sam2_env/bin/activate
    ```
 
 3. **Install Dependencies**
@@ -50,13 +62,13 @@ Follow these steps after cloning the repository:
 
    Run the export script to generate the ONNX files. The script accepts a `--model_size` argument with valid values: `base_plus`, `large`, `small`, or `tiny`. For example, to export the "small" model variant, run:
    ```bash
-   python export/onnx_export.py --model_size small
+   python export/onnx_export.py --model_size tiny
    ```
    The ONNX files will be saved in the corresponding output directory (e.g., `checkpoints/small/`) with names like:
-   - `image_encoder_small.onnx`
-   - `image_decoder_small.onnx`
-   - `memory_attention_small.onnx`
-   - `memory_encoder_small.onnx`
+   - `image_encoder_tiny.onnx`
+   - `image_decoder_tiny.onnx`
+   - `memory_attention_tiny.onnx`
+   - `memory_encoder_tiny.onnx`
 
 4. **Run Python tests**
 
