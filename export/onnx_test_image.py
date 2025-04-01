@@ -50,7 +50,7 @@ def prepare_points(points_list, labels_list, image_size, input_size):
 def main():
     parser = argparse.ArgumentParser(description="Interactive SAM2 ONNX test with points prompt.")
     parser.add_argument(
-        "--size_name",
+        "--model_size",
         type=str,
         default="tiny",
         choices=["base_plus", "large", "small", "tiny"],
@@ -84,14 +84,14 @@ def main():
                 print("No file selected. Exiting.")
                 sys.exit(0)
 
-    size_name = args.size_name
-    outdir = os.path.join("checkpoints", size_name)
+    model_size = args.model_size
+    outdir = os.path.join("checkpoints", model_size)
 
     # For example, your .onnx files are named:
     #  image_encoder_small.onnx
     #  image_decoder_small.onnx
-    encoder_filename = f"image_encoder_{size_name}.onnx"
-    decoder_filename = f"image_decoder_{size_name}.onnx"
+    encoder_filename = f"image_encoder_{model_size}.onnx"
+    decoder_filename = f"image_decoder_{model_size}.onnx"
 
     encoder_path = os.path.join(outdir, encoder_filename)
     decoder_path = os.path.join(outdir, decoder_filename)

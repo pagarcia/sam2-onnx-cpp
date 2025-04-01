@@ -78,8 +78,8 @@ Follow these steps after cloning the repository:
    ```
    Run the tests with 
    ```bash
-   python export/onnx_test_image.py --model_size small
-   python export/onnx_test_video.py --model_size small
+   python export/onnx_test_image.py --model_size tiny
+   python export/onnx_test_video.py --model_size tiny
    ```
    You can find short video samples in https://filesamples.com/formats/mkv and https://www.sample-videos.com/.
 

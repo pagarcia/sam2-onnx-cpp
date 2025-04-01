@@ -221,10 +221,10 @@ def interactive_select_points(
 def onnx_test_video_mkv_full(args):
     """
     Reads a video file with OpenCV, uses all SAM2 ONNX modules:
-      - image_encoder_<size_name>.onnx
-      - image_decoder_<size_name>.onnx
-      - memory_encoder_<size_name>.onnx
-      - memory_attention_<size_name>.onnx
+      - image_encoder_<model_size>.onnx
+      - image_decoder_<model_size>.onnx
+      - memory_encoder_<model_size>.onnx
+      - memory_attention_<model_size>.onnx
 
     to segment the entire video from a single user prompt on the first frame
     (interactively selected).
@@ -235,11 +235,11 @@ def onnx_test_video_mkv_full(args):
     # ---------------------------------------------------------------------
     # 1) Load all four ONNX sessions
     # ---------------------------------------------------------------------
-    outdir = os.path.join("checkpoints", args.size_name)
-    enc_path = os.path.join(outdir, f"image_encoder_{args.size_name}.onnx")
-    dec_path = os.path.join(outdir, f"image_decoder_{args.size_name}.onnx")
-    men_path = os.path.join(outdir, f"memory_encoder_{args.size_name}.onnx")
-    mat_path = os.path.join(outdir, f"memory_attention_{args.size_name}.onnx")
+    outdir = os.path.join("checkpoints", args.model_size)
+    enc_path = os.path.join(outdir, f"image_encoder_{args.model_size}.onnx")
+    dec_path = os.path.join(outdir, f"image_decoder_{args.model_size}.onnx")
+    men_path = os.path.join(outdir, f"memory_encoder_{args.model_size}.onnx")
+    mat_path = os.path.join(outdir, f"memory_attention_{args.model_size}.onnx")
 
     session_encoder = InferenceSession(enc_path, providers=onnxruntime.get_available_providers())
     session_decoder = InferenceSession(dec_path, providers=onnxruntime.get_available_providers())
@@ -477,7 +477,7 @@ def main():
         description="Use all SAM2 ONNX modules on a video with a single (interactive) user prompt on the first frame. Overlays the predicted mask in bright-green with transparency."
     )
     parser.add_argument(
-        "--size_name",
+        "--model_size",
         type=str,
         default="tiny",
         choices=["base_plus", "large", "small", "tiny"],
