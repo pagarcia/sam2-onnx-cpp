@@ -85,6 +85,8 @@ Follow these steps after cloning the repository:
 
 5. **Compile test C++ wrapper**
 
+   On Windows:
+
    Download and unzip https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-win-x64-gpu-1.20.0.zip
    (at https://github.com/microsoft/onnxruntime/releases/tag/v1.20.0).
    Create a `build_release` folder inside `cpp` folder.
@@ -103,6 +105,46 @@ Follow these steps after cloning the repository:
    ```bash
    ./Segment.exe --onnx_test_video
    ```
+
+   On MacOS:
+
+   Download and unzip https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-win-arm64-1.20.0.zip
+   (at https://github.com/microsoft/onnxruntime/releases/tag/v1.20.0) in /opt/ directory. 
+   Install opencv using `brew install opencv`.
+   Create a `models` folder inside `cpp` folder containing the `.onnx` files (called `image_decoder.onnx`, `image_encoder.onnx`, `memory_attention.onnx`, `memory_encoder.onnx`).
+   Create a `build_release` folder inside `cpp` folder.
+   Create a `package` folder inside `cpp` folder.
+
+   Run
+   ```bash
+   cmake -S . -B build_release -DCMAKE_BUILD_TYPE=Release -DOpenCV_DIR="/opt/homebrew/opt/opencv" -DONNXRUNTIME_DIR="/opt/onnxruntime-osx-arm64-1.20.0"
+   ```
+
+   Each time you want to build, run:
+   ```bash
+   cmake --build build_release
+   ```
+
+   Create the distributable app:
+   ```bash
+   cmake --install build_release --prefix $HOME/Documents/sam2-onnx-cpp/cpp/package
+   ```
+
+   Run the app either double clicking on it, or running
+   ```bash
+   cd package/Segment.app/Contents/MacOS
+   ./Segment --onnx_test_image
+   cd $HOME/Documents/sam2-onnx-cpp/cpp
+   ```
+
+   or 
+
+   ```bash
+   cd package/Segment.app/Contents/MacOS
+   ./Segment --onnx_test_video
+   cd $HOME/Documents/sam2-onnx-cpp/cpp
+   ```
+
 
 ## Project Structure
 
