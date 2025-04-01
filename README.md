@@ -134,6 +134,7 @@ Follow these steps after cloning the repository:
    ```bash
    cd package/Segment.app/Contents/MacOS
    ./Segment --onnx_test_image
+   cd $HOME/Documents/sam2-onnx-cpp/cpp
    ```
 
    or 
@@ -141,6 +142,7 @@ Follow these steps after cloning the repository:
    ```bash
    cd package/Segment.app/Contents/MacOS
    ./Segment --onnx_test_video
+   cd $HOME/Documents/sam2-onnx-cpp/cpp
    ```
 
 
