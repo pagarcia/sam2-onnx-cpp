@@ -78,13 +78,16 @@ Follow these steps after cloning the repository:
    In some cases, you may experience shape inference warnings or segmentation faults (especially on macOS) due to dynamic shape paths. You can run [onnx-simplifier](https://github.com/daquexian/onnx-simplifier) to prune or unify these paths:
 
    ```bash
-   pip install onnx-simplifier
+   pip install onnxsim
    ```
 
    Then, for each exported file (e.g. `image_encoder_tiny.onnx`), run:
 
    ```bash
    python -m onnxsim checkpoints/tiny/image_encoder_tiny.onnx checkpoints/tiny/image_encoder_tiny_simplified.onnx
+   python -m onnxsim checkpoints/tiny/image_decoder_tiny.onnx checkpoints/tiny/image_decoder_tiny_simplified.onnx
+   python -m onnxsim checkpoints/tiny/memory_encoder_tiny.onnx checkpoints/tiny/memory_encoder_tiny_simplified.onnx
+   python -m onnxsim checkpoints/tiny/memory_attention_tiny.onnx checkpoints/tiny/memory_attention_tiny_simplified.onnx
    ```
 
    Repeat for `image_decoder_tiny.onnx`, `memory_encoder_tiny.onnx`, and `memory_attention_tiny.onnx`.  You can then use the simplified files in your downstream pipeline.  This often fixes shape warnings and can prevent segmentation faults on certain platforms.
