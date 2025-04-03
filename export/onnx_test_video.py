@@ -8,6 +8,23 @@ import onnxruntime
 from onnxruntime import InferenceSession
 from PyQt5 import QtWidgets
 
+def print_system_info():
+    providers = onnxruntime.get_available_providers()
+    print("[INFO] OS:", sys.platform)
+    print("[INFO] ONNX Runtime available providers:", providers)
+    if sys.platform.startswith("win"):
+        if "CUDAExecutionProvider" in providers:
+            print("[INFO] System: Using CUDA for computation on Windows.")
+        else:
+            print("[INFO] System: Using CPU for computation on Windows.")
+    elif sys.platform == "darwin":
+        if "CoreMLExecutionProvider" in providers:
+            print("[INFO] System: Using CoreML for computation on macOS.")
+        else:
+            print("[INFO] System: Using CPU for computation on macOS.")
+    else:
+        print("[INFO] System: Unrecognized OS. Providers:", providers)
+
 def prepare_image(frame_bgr, input_size):
     """
     Convert an OpenCV BGR frame into a preprocessed tensor 
@@ -367,6 +384,9 @@ def onnx_test_video_mkv_full(args):
     print(f"Done! Wrote {frame_index} frames with overlays to {out_filename}")
 
 def main():
+    # Print system information about the available computation providers.
+    print_system_info()
+    
     parser = argparse.ArgumentParser(
         description="Use all SAM2 ONNX modules on a video with a single interactive prompt on the first frame. Overlays the predicted mask in bright-green with transparency."
     )

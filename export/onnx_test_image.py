@@ -8,6 +8,22 @@ from onnxruntime import InferenceSession
 import argparse
 from PyQt5 import QtWidgets
 
+def print_system_info():
+    providers = onnxruntime.get_available_providers()
+    print("[INFO] OS:", sys.platform)
+    print("[INFO] ONNX Runtime available providers:", providers)
+    if sys.platform.startswith("win"):
+        if "CUDAExecutionProvider" in providers:
+            print("[INFO] System: Using CUDA for computation on Windows.")
+        else:
+            print("[INFO] System: Using CPU for computation on Windows.")
+    elif sys.platform == "darwin":
+        if "CoreMLExecutionProvider" in providers:
+            print("[INFO] System: Using CoreML for computation on macOS.")
+        else:
+            print("[INFO] System: Using CPU for computation on macOS.")
+    else:
+        print("[INFO] System: Unrecognized OS. Providers:", providers)
 
 def prepare_points(points_list, labels_list, image_size, input_size):
     """
@@ -41,6 +57,9 @@ def prepare_points(points_list, labels_list, image_size, input_size):
 
 
 def main():
+    # Print system information about the available computation providers.
+    print_system_info()
+    
     parser = argparse.ArgumentParser(
         description="Interactive SAM2 ONNX test with points prompt."
     )
