@@ -6,14 +6,7 @@ import numpy as np
 import onnxruntime
 from onnxruntime import InferenceSession
 import argparse
-
-# For the file dialog
-try:
-    import tkinter as tk
-    from tkinter import filedialog
-    HAVE_TK = True
-except ImportError:
-    HAVE_TK = False
+from PyQt5 import QtWidgets
 
 
 def prepare_points(points_list, labels_list, image_size, input_size):
@@ -48,7 +41,9 @@ def prepare_points(points_list, labels_list, image_size, input_size):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Interactive SAM2 ONNX test with points prompt.")
+    parser = argparse.ArgumentParser(
+        description="Interactive SAM2 ONNX test with points prompt."
+    )
     parser.add_argument(
         "--model_size",
         type=str,
@@ -56,33 +51,21 @@ def main():
         choices=["base_plus", "large", "small", "tiny"],
         help="Which model size to use: base_plus, large, small, or tiny."
     )
-    parser.add_argument(
-        "--image",
-        type=str,
-        default=None,
-        help="Path to the input image. If not provided, will open a file dialog."
-    )
     args = parser.parse_args()
 
-    # If no image is given, open a file selection dialog (requires Tk)
-    if args.image is None:
-        if not HAVE_TK:
-            print("Tkinter is not installed, and no --image was provided.\n"
-                  "Please install tkinter or specify --image.")
-            sys.exit(1)
-        else:
-            root = tk.Tk()
-            root.withdraw()  # Hide the main Tk window
-            selected = filedialog.askopenfilename(
-                title="Select an Image File",
-                filetypes=[("Image Files", "*.jpg *.jpeg *.png *.bmp"), ("All Files", "*.*")]
-            )
-            if selected:
-                args.image = selected
-                print(f"[INFO] Selected image: {args.image}")
-            else:
-                print("No file selected. Exiting.")
-                sys.exit(0)
+    # Always use PyQt5 file dialog to select the image.
+    app = QtWidgets.QApplication(sys.argv)
+    image_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+        None,
+        "Select an Image File",
+        "",
+        "Image Files (*.jpg *.jpeg *.png *.bmp);;All Files (*)"
+    )
+    if not image_path:
+        print("No file selected. Exiting.")
+        sys.exit(0)
+    print(f"[INFO] Selected image: {image_path}")
+    args.image = image_path
 
     model_size = args.model_size
     outdir = os.path.join("checkpoints", model_size)

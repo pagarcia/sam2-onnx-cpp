@@ -56,9 +56,9 @@ Follow these steps after cloning the repository:
 
    With the virtual environment activated, install the required packages:
    ```bash
-   pip install torch onnx onnxruntime hydra-core pillow tqdm iopath opencv-python
+   pip install torch onnx onnxruntime hydra-core pillow tqdm iopath opencv-python pyqt5
    ```
-   (The `opencv-python` install is needed for the Python test scripts.)
+   (The `opencv-python` and `pyqt5` install is needed for the Python test scripts.)
 
 4. **Generate ONNX Files**
 
