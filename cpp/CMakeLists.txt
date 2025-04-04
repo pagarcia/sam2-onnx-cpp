@@ -83,7 +83,7 @@ elseif(APPLE)
 
   # Link to the ONNX Runtime dylib, OpenCV libs, and Cocoa (for file dialogs).
   target_link_libraries(${TARGET_NAME}
-      ${ONNXRUNTIME_DIR}/lib/libonnxruntime.1.20.0.dylib
+      ${ONNXRUNTIME_DIR}/lib/libonnxruntime.1.21.0.dylib
       ${OpenCV_LIBS}
       "-framework Cocoa"
   )
@@ -116,7 +116,7 @@ if(APPLE)
   )
 
   # Copy the ONNX Runtime .dylib into Contents/Frameworks
-  install(FILES "${ONNXRUNTIME_DIR}/lib/libonnxruntime.1.20.0.dylib"
+  install(FILES "${ONNXRUNTIME_DIR}/lib/libonnxruntime.1.21.0.dylib"
           DESTINATION "${TARGET_NAME}.app/Contents/Frameworks"
   )
 

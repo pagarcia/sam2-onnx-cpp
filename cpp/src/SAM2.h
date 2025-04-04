@@ -2,6 +2,8 @@
 #define SAMCPP__SAM_H_
 
 #include <onnxruntime_cxx_api.h>
+#include <cpu_provider_factory.h>
+#include <coreml_provider_factory.h>
 #include <opencv2/core.hpp>
 #include <list>
 #include <fstream>

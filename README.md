@@ -134,15 +134,15 @@ Follow these steps after cloning the repository:
    ### macOS
 
    On MacOS:
-   Download and unzip https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-win-arm64-1.20.0.zip
-   (at https://github.com/microsoft/onnxruntime/releases/tag/v1.20.0) in /opt/ directory.
+   Download and unzip https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-win-arm64-1.21.0.zip
+   (at https://github.com/microsoft/onnxruntime/releases/tag/v1.21.0) in /opt/ directory.
    Install opencv using `brew install opencv`.
    Create a `models` folder inside `cpp` folder containing the `.onnx` files (called `image_decoder.onnx`, `image_encoder.onnx`, `memory_attention.onnx`, `memory_encoder.onnx`).
    Create a `build_release` folder inside `cpp` folder.
    Create a `package` folder inside `cpp` folder.
    Run
    ```bash
-   cmake -S . -B build_release -DCMAKE_BUILD_TYPE=Release -DOpenCV_DIR="/opt/homebrew/opt/opencv" -DONNXRUNTIME_DIR="/opt/onnxruntime-osx-arm64-1.20.0"
+   cmake -S . -B build_release -DCMAKE_BUILD_TYPE=Release -DOpenCV_DIR="/opt/homebrew/opt/opencv" -DONNXRUNTIME_DIR="/opt/onnxruntime-osx-arm64-1.21.0"
    ```
    Each time you want to build, run:
    ```bash

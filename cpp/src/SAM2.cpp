@@ -95,13 +95,49 @@ void SAM2::setupSessionOptions(Ort::SessionOptions &options,
     options.SetIntraOpNumThreads(threadsNumber);
     options.SetGraphOptimizationLevel(optLevel);
 
-    if (device != "cpu" && device.rfind("cuda:", 0) == 0) {
+    if (device == "cpu") {
+        std::cout << "[DEBUG] Using CPU execution provider." << std::endl;
+        int use_arena = 1;
+        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena);
+        if (status != nullptr) {
+            const char* error_message = Ort::GetApi().GetErrorMessage(status);
+            Ort::GetApi().ReleaseStatus(status);
+            throw std::runtime_error(std::string("Error appending CPU execution provider: ") + error_message);
+        }
+    }
+    else if (device.rfind("cuda:", 0) == 0) {
+        std::cout << "[DEBUG] Using CUDA execution provider." << std::endl;
         int gpuId = std::stoi(device.substr(5));
         OrtCUDAProviderOptions cudaOpts;
         cudaOpts.device_id = gpuId;
         options.AppendExecutionProvider_CUDA(cudaOpts);
     }
+    else if (device.rfind("coreml", 0) == 0) {
+        std::cout << "[DEBUG] Using CoreML execution provider." << std::endl;
+        // For CoreML, you need to provide a uint32_t flag.
+        // Here we use the default flag (COREML_FLAG_USE_NONE). You can modify coreml_flags as needed.
+        uint32_t coreml_flags = COREML_FLAG_USE_NONE;
+        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CoreML(options, coreml_flags);
+        if (status != nullptr) {
+            const char* error_message = Ort::GetApi().GetErrorMessage(status);
+            Ort::GetApi().ReleaseStatus(status);
+            throw std::runtime_error(std::string("Error appending CoreML execution provider: ") + error_message);
+        }
+    }
+    else {
+        std::cout << "[DEBUG] Unknown device type. Defaulting to CPU execution provider." << std::endl;
+        int use_arena = 1;
+        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena);
+        if (status != nullptr) {
+            const char* error_message = Ort::GetApi().GetErrorMessage(status);
+            Ort::GetApi().ReleaseStatus(status);
+            throw std::runtime_error(std::string("Error appending default CPU execution provider: ") + error_message);
+        }
+    }
 }
+
+
+
 
 // --------------------
 // Initialize methods
