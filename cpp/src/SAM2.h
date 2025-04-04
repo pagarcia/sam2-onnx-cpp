@@ -3,7 +3,9 @@
 
 #include <onnxruntime_cxx_api.h>
 #include <cpu_provider_factory.h>
+#ifdef __APPLE__
 #include <coreml_provider_factory.h>
+#endif
 #include <opencv2/core.hpp>
 #include <list>
 #include <fstream>

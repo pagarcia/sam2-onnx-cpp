@@ -113,6 +113,7 @@ void SAM2::setupSessionOptions(Ort::SessionOptions &options,
         options.AppendExecutionProvider_CUDA(cudaOpts);
     }
     else if (device.rfind("coreml", 0) == 0) {
+#ifdef __APPLE__
         std::cout << "[DEBUG] Using CoreML execution provider." << std::endl;
         // For CoreML, you need to provide a uint32_t flag.
         // Here we use the default flag (COREML_FLAG_USE_NONE). You can modify coreml_flags as needed.
@@ -123,6 +124,16 @@ void SAM2::setupSessionOptions(Ort::SessionOptions &options,
             Ort::GetApi().ReleaseStatus(status);
             throw std::runtime_error(std::string("Error appending CoreML execution provider: ") + error_message);
         }
+#else
+        std::cout << "[WARN] CoreML requested but not supported on this platform. Defaulting to CPU." << std::endl;
+        int use_arena = 1;
+        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena);
+        if (status != nullptr) {
+            const char* error_message = Ort::GetApi().GetErrorMessage(status);
+            Ort::GetApi().ReleaseStatus(status);
+            throw std::runtime_error(std::string("Error appending CPU execution provider: ") + error_message);
+        }
+#endif
     }
     else {
         std::cout << "[DEBUG] Unknown device type. Defaulting to CPU execution provider." << std::endl;
@@ -135,9 +146,6 @@ void SAM2::setupSessionOptions(Ort::SessionOptions &options,
         }
     }
 }
-
-
-
 
 // --------------------
 // Initialize methods
