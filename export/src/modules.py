@@ -6,64 +6,44 @@ class ImageEncoder(nn.Module):
     def __init__(self, sam_model: SAM2Base) -> None:
         super().__init__()
         self.model = sam_model
-        # Feature map sizes for different levels (in ascending order).
-        # Let's assume index 0 => largest spatial, 2 => smallest spatial.
+        # Define target feature map sizes in ascending order of spatial resolution.
+        # Here index 0 is for the highest resolution (256x256) and index 2 for the lowest (64x64).
         self._bb_feat_sizes = [
-            (256, 256),
-            (128, 128),
-            (64, 64),
+            (256, 256),  # high_res_features1
+            (128, 128),  # high_res_features2
+            (64, 64),    # image_embeddings
         ]
 
     @torch.no_grad()
     def forward(self, input: torch.Tensor):
         # Run the SAM2 image encoder.
         backbone_out = self.model.forward_image(input)
-        # Flatten feature maps and get positional encodings.
+        # Prepare backbone features (flattened features, vision embeddings, positional encodings, etc.)
         backbone_out, vision_feats, vision_pos_embeds, feat_sizes = \
             self.model._prepare_backbone_features(backbone_out)
-
+        
         # Optionally add no_mem_embed (used for video/multi-frame mode).
         if self.model.directly_add_no_mem_embed:
             vision_feats[-1] = vision_feats[-1] + self.model.no_mem_embed
 
-        # vision_feats is typically a list: [feat0, feat1, feat2] each shape (HW, B, C).
-        # We want them in shapes [B,C,H,W], specifically:
-        #   feat0 -> [1,  32, 256, 256]
-        #   feat1 -> [1,  64, 128, 128]
-        #   feat2 -> [1, 256,  64,  64]
-        # We'll do a straightforward approach that matches self._bb_feat_sizes.
+        # Use a list comprehension with reversed order to match the feature maps with their target sizes.
+        # This helps ensure the number of elements in each feature tensor matches the expected (H, W).
+        feats = [
+            feat.permute(1, 2, 0).contiguous().view(1, -1, *target_size)
+            for feat, target_size in zip(vision_feats[::-1], self._bb_feat_sizes[::-1])
+        ][::-1]
+        
+        # Assign outputs based on the assumed order:
+        high_res_features1 = feats[0]  # expected shape: [1, 32, 256, 256]
+        high_res_features2 = feats[1]  # expected shape: [1, 64, 128, 128]
+        image_embeddings   = feats[2]  # expected shape: [1, 256, 64, 64]
 
-        # CAREFUL: Ensure you're matching the correct feat size with each index
-        # from your actual backbone order.
-        f0_h, f0_w = self._bb_feat_sizes[0]  # (256,256)
-        f1_h, f1_w = self._bb_feat_sizes[1]  # (128,128)
-        f2_h, f2_w = self._bb_feat_sizes[2]  # (64,64)
-
-        feat0 = vision_feats[0]  # shape (256*256, B=1, ?)
-        feat1 = vision_feats[1]
-        feat2 = vision_feats[2]
-
-        # Convert each to (B,C,H,W):
-        feat0 = feat0.permute(1, 2, 0).reshape(1, -1, f0_h, f0_w)
-        feat1 = feat1.permute(1, 2, 0).reshape(1, -1, f1_h, f1_w)
-        feat2 = feat2.permute(1, 2, 0).reshape(1, -1, f2_h, f2_w)
-
-        # Now feat0 => [1, 32, 256, 256], feat1 => [1, 64, 128, 128], feat2 => [1, 256, 64, 64]
-        # According to your original code, you want:
-        #   high_res_features1 = feats[0]  => [1,32,256,256]
-        #   high_res_features2 = feats[1]  => [1,64,128,128]
-        #   image_embeddings   = feats[2]  => [1,256,64,64]
-        high_res_features1 = feat0
-        high_res_features2 = feat1
-        image_embeddings   = feat2
-
-        # For multi-frame memory: get flattened vision features and positional encodings.
-        current_vision_feat = vision_feats[-1]   # [HW, B, C], e.g. [4096, 1, 256]
-        vision_pos_embed    = vision_pos_embeds[-1]  # [HW, B, 256]
-
+        # For multi-frame memory, also return the flattened vision features and positional encodings.
+        current_vision_feat = vision_feats[-1]   # typically shape: [HW, B, C]
+        vision_pos_embed    = vision_pos_embeds[-1]  # typically shape: [HW, B, 256]
+        
         return (image_embeddings, high_res_features1, high_res_features2,
                 current_vision_feat, vision_pos_embed)
-
 
 class ImageDecoder(nn.Module):
     def __init__(self, sam_model: SAM2Base) -> None:
