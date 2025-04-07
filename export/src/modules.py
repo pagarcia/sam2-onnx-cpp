@@ -3,47 +3,65 @@ from torch import nn
 from sam2.modeling.sam2_base import SAM2Base
 
 class ImageEncoder(nn.Module):
-    def __init__(self, sam_model: SAM2Base) -> None:
+    def __init__(self, sam_model) -> None:
         super().__init__()
         self.model = sam_model
-        # Define target feature map sizes in ascending order of spatial resolution.
-        # Here index 0 is for the highest resolution (256x256) and index 2 for the lowest (64x64).
-        self._bb_feat_sizes = [
-            (256, 256),  # high_res_features1
-            (128, 128),  # high_res_features2
-            (64, 64),    # image_embeddings
-        ]
+        # Save the no_mem_embed so we can add it later.
+        self.no_mem_embed = sam_model.no_mem_embed
+        # Use the internal image encoder of SAM2.
+        self.image_encoder = sam_model.image_encoder
+        # We'll use the SAM2 helper for preparing backbone features.
+        self.prepare_backbone_features = sam_model._prepare_backbone_features
 
     @torch.no_grad()
-    def forward(self, input: torch.Tensor):
-        # Run the SAM2 image encoder.
-        backbone_out = self.model.forward_image(input)
-        # Prepare backbone features (flattened features, vision embeddings, positional encodings, etc.)
-        backbone_out, vision_feats, vision_pos_embeds, feat_sizes = \
-            self.model._prepare_backbone_features(backbone_out)
+    def forward(self, image: torch.Tensor):
+        # Run the model's image encoder. Expecting a dict output with keys:
+        # "vision_features", "vision_pos_enc", and "backbone_fpn".
+        backbone_out = self.image_encoder(image)
         
-        # Optionally add no_mem_embed (used for video/multi-frame mode).
-        if self.model.directly_add_no_mem_embed:
-            vision_feats[-1] = vision_feats[-1] + self.model.no_mem_embed
+        # Apply the conv_s0 and conv_s1 convolutions to the respective FPN features.
+        backbone_out["backbone_fpn"][0] = self.model.sam_mask_decoder.conv_s0(backbone_out["backbone_fpn"][0])
+        backbone_out["backbone_fpn"][1] = self.model.sam_mask_decoder.conv_s1(backbone_out["backbone_fpn"][1])
+        
+        # Extract the outputs from the dictionary.
+        vision_pos_enc = backbone_out["vision_pos_enc"]
+        backbone_fpn = backbone_out["backbone_fpn"]
+        pix_feat = backbone_out["vision_features"]
 
-        # Use a list comprehension with reversed order to match the feature maps with their target sizes.
-        # This helps ensure the number of elements in each feature tensor matches the expected (H, W).
-        feats = [
-            feat.permute(1, 2, 0).contiguous().view(1, -1, *target_size)
-            for feat, target_size in zip(vision_feats[::-1], self._bb_feat_sizes[::-1])
-        ][::-1]
-        
-        # Assign outputs based on the assumed order:
-        high_res_features1 = feats[0]  # expected shape: [1, 32, 256, 256]
-        high_res_features2 = feats[1]  # expected shape: [1, 64, 128, 128]
-        image_embeddings   = feats[2]  # expected shape: [1, 256, 64, 64]
+        # Ensure each tensor has a batch dimension (expand if necessary).
+        for i in range(len(backbone_fpn)):
+            if backbone_fpn[i].dim() == 3:
+                backbone_fpn[i] = backbone_fpn[i].unsqueeze(0)
+        for i in range(len(vision_pos_enc)):
+            if vision_pos_enc[i].dim() == 3:
+                vision_pos_enc[i] = vision_pos_enc[i].unsqueeze(0)
 
-        # For multi-frame memory, also return the flattened vision features and positional encodings.
-        current_vision_feat = vision_feats[-1]   # typically shape: [HW, B, C]
-        vision_pos_embed    = vision_pos_embeds[-1]  # typically shape: [HW, B, 256]
-        
-        return (image_embeddings, high_res_features1, high_res_features2,
-                current_vision_feat, vision_pos_embed)
+        # Prepare the backbone features.
+        _, current_vision_feats, current_vision_pos_embeds, _ = self.prepare_backbone_features({
+            "backbone_fpn": backbone_fpn,
+            "vision_pos_enc": vision_pos_enc,
+        })
+
+        # Add the no_mem_embed to the last vision feature.
+        current_vision_feat = current_vision_feats[-1] + self.no_mem_embed
+        # Reshape to get [1,256,64,64] (here 64x64 is assumed from your model).
+        current_vision_feat2 = current_vision_feat.reshape(64, 64, 1, 256).permute(2, 3, 0, 1)
+
+        # Process the high-resolution features from the lower levels.
+        high_res_features_0 = current_vision_feats[0].reshape(256, 256, 1, 32).permute(2, 3, 0, 1)
+        high_res_features_1 = current_vision_feats[1].reshape(128, 128, 1, 64).permute(2, 3, 0, 1)
+
+        # Return the outputs in the expected order.
+        # pix_feat: [1,256,64,64] from vision features,
+        # high_res_features_0: [1,32,256,256],
+        # high_res_features_1: [1,64,128,128],
+        # current_vision_feat2: [1,256,64,64],
+        # current_vision_pos_embeds[-1]: [4096,1,256].
+        return (pix_feat,
+                high_res_features_0,
+                high_res_features_1,
+                current_vision_feat2,
+                current_vision_pos_embeds[-1])
 
 class ImageDecoder(nn.Module):
     def __init__(self, sam_model: SAM2Base) -> None:
