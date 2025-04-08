@@ -94,11 +94,13 @@ cmake --build . --config Release
 ```
 
 Inside `cpp/build_release/bin/Release` pleace the following files:
+
 Your previously built ONNX files renamed as:
 - `image_decoder.onnx`
 - `image_encoder.onnx`
 - `memory_attention.onnx`
 - `memory_encoder.onnx`
+
 From `C:\Program Files\NVIDIA\CUDNN\v9.8\bin\12.8`:
 - `cudnn_adv64_9.dll`
 - `cudnn_cnn64_9.dll`
@@ -108,11 +110,13 @@ From `C:\Program Files\NVIDIA\CUDNN\v9.8\bin\12.8`:
 - `cudnn_heuristic64_9.dll`
 - `cudnn_ops64_9.dll`
 - `cudnn64_9.dll`
+
 From `C:/Program Files/onnxruntime-win-x64-gpu-1.20.0`:
 - `onnxruntime.dll`
 - `onnxruntime_providers_cuda.dll`
 - `onnxruntime_providers_shared.dll`
 - `onnxruntime_providers_tensorrt.dll`
+
 From `C:/Program Files/OpenCV/Release`:
 - `opencv_core4110.dll`
 - `opencv_highgui4110.dll`
