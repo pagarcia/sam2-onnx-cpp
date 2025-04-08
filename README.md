@@ -236,7 +236,8 @@ sam2-onnx-cpp/
 │   └── src/                # src code for C++ wrapper and tests
 ├── checkpoints/            # Contains SAM2 model weights (fetched via sparse)
 ├── sam2/                   # Contains the SAM2 code (fetched via sparse)
-├── fetch_sparse.bat        # Batch file to fetch sparse checkout and download checkpoints
+├── fetch_sparse.bat        # Batch file to fetch sparse checkout and download checkpoints for Windows
+├── fetch_sparse.sh         # Batch file to fetch sparse checkout and download checkpoints for macOS
 ├── LICENSE
 └── README.md               # (this file)
 ```
@@ -249,6 +250,14 @@ sam2-onnx-cpp/
   - **Image Decoder** (`image_decoder_*.onnx`)
   - **Memory Attention** (`memory_attention_*.onnx`)
   - **Memory Encoder** (`memory_encoder_*.onnx`)
+
+## Acknowledgements
+
+This project has been modeled on the following repositories. Their work is gratefully acknowledged:
+
+- [ryouchinsa/sam-cpp-macos](https://github.com/ryouchinsa/sam-cpp-macos)
+- [Aimol-l/SAM2Export](https://github.com/Aimol-l/SAM2Export)
+- [Aimol-l/OrtInference](https://github.com/Aimol-l/OrtInference)
 
 ## License
 
