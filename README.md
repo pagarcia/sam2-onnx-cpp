@@ -44,6 +44,8 @@ This produces four `.onnx` files in `checkpoints/tiny/`:
 - `memory_attention_tiny.onnx`
 - `memory_encoder_tiny.onnx`
 
+Other than `tiny`, you can choose `small`, `base_plus` and `large`.
+
 ### 5. (Optional) Simplify the ONNX Models
 
 Some shape inference warnings or segmentation faults (especially on macOS) may occur due to dynamic shape paths. To mitigate this, install [onnx-simplifier](https://github.com/daquexian/onnx-simplifier):
@@ -79,7 +81,11 @@ Extract to a location like `C:\Program Files\onnxruntime-win-x64-gpu-1.20.0`.
 #### 7.2 OpenCV  
 Install OpenCV (or point to an existing installation), e.g. located at `C:\Program Files\OpenCV\Release`.
 
-#### 7.3 CMake Configuration and Build
+#### 7.3 cuDNN  
+Download and install cuDNN from https://developer.nvidia.com/cudnn-downloads?target_os=Windows&target_arch=x86_64&target_version=10&target_type=exe_local.
+It should match your version of CUDA.
+
+#### 7.4 CMake Configuration and Build
 
 Inside the `cpp` folder, create a `build_release` folder and run:
 ```bash
@@ -87,7 +93,34 @@ cmake -G "Visual Studio 17 2022" -DCMAKE_CONFIGURATION_TYPES=Release -DOpenCV_DI
 cmake --build . --config Release
 ```
 
-#### 7.4 Run the Compiled Executable
+Inside `cpp/build_release/bin/Release` pleace the following files:
+Your previously built ONNX files renamed as:
+- `image_decoder.onnx`
+- `image_encoder.onnx`
+- `memory_attention.onnx`
+- `memory_encoder.onnx`
+From `C:\Program Files\NVIDIA\CUDNN\v9.8\bin\12.8`:
+- `cudnn_adv64_9.dll`
+- `cudnn_cnn64_9.dll`
+- `cudnn_engines_precompiled64_9.dll`
+- `cudnn_engines_runtime_compiled64_9.dll`
+- `cudnn_graph64_9.dll`
+- `cudnn_heuristic64_9.dll`
+- `cudnn_ops64_9.dll`
+- `cudnn64_9.dll`
+From `C:/Program Files/onnxruntime-win-x64-gpu-1.20.0`:
+- `onnxruntime.dll`
+- `onnxruntime_providers_cuda.dll`
+- `onnxruntime_providers_shared.dll`
+- `onnxruntime_providers_tensorrt.dll`
+From `C:/Program Files/OpenCV/Release`:
+- `opencv_core4110.dll`
+- `opencv_highgui4110.dll`
+- `opencv_imgcodecs4110.dll`
+- `opencv_imgproc4110.dll`
+- `opencv_videoio4110.dll`
+
+#### 7.5 Run the Compiled Executable
 
 The compiled executable typically goes to `cpp/build_release/bin/Release`. For example, run:
 ```bash
@@ -134,6 +167,8 @@ This produces four `.onnx` files in `checkpoints/tiny/`:
 - `image_decoder_tiny.onnx`
 - `memory_attention_tiny.onnx`
 - `memory_encoder_tiny.onnx`
+
+Other than `tiny`, you can choose `small`, `base_plus` and `large`.
 
 ### 5. (Optional) Simplify the ONNX Models
 
@@ -232,7 +267,10 @@ sam2-onnx-cpp/
 │   ├── onnx_test_video.py  # Python test script for a video
 │   └── src/                # Contains modules and utilities for ONNX export
 ├── cpp/
-│   ├── CMakeLists.txt
+│   ├── CMakeLists.txt 
+│   ├── build_release/      # Folder containing compiled binaries
+│   ├── models/             # (Only for macOS) Folder containing ONNX files
+│   ├── package/            # (Only for macOS) Folder containing executable package
 │   └── src/                # src code for C++ wrapper and tests
 ├── checkpoints/            # Contains SAM2 model weights (fetched via sparse)
 ├── sam2/                   # Contains the SAM2 code (fetched via sparse)
