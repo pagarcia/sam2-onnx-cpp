@@ -3,6 +3,8 @@
 **Segment Anything Model 2 C++ ONNX Wrapper**
 
 This repository provides a C++ wrapper for the [Segment Anything Model 2 (SAM2)](https://github.com/facebookresearch/sam2) using ONNX.  
+It wraps branch https://github.com/pagarcia/sam2/tree/feature/onnx-export, which features particular changes in
+`sam2/modeling/position_encoding.py` and `sam2/modeling/sam/transformer.py`.
 
 ## Windows Setup & Execution
 
