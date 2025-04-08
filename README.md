@@ -3,167 +3,224 @@
 **Segment Anything Model 2 C++ ONNX Wrapper**
 
 This repository provides a C++ wrapper for the [Segment Anything Model 2 (SAM2)](https://github.com/facebookresearch/sam2) using ONNX.  
-> **Note:** This project is currently configured for Windows and has additional instructions for macOS usage.
 
-## Requirements
+## Windows Setup & Execution
 
-- Windows or macOS
-- Python 3.x
-- Git
+### 1. Fetch the SAM2 Sparse Checkout and Download Checkpoints
 
-## Setup Instructions
+Run the provided batch file in the repository root:
+```batch
+fetch_sparse.bat
+```
 
-Follow these steps after cloning the repository:
+### 2. Create a Python Virtual Environment
 
-1. **Fetch the SAM2 Sparse Checkout and Download Checkpoints**
+In the repository root, run:
+```bash
+python -m venv sam2_env
+```
+Then activate the virtual environment:
+```bash
+sam2_env\Scripts\activate
+```
 
-   Run the provided batch file to:
-   - Remove any existing `sam2` and `checkpoints` folders.
-   - Clone only the required folders (`sam2` and `checkpoints`) from your SAM2 fork (branch `feature/onnx-export`) using sparse checkout.
-   - Convert line endings for the checkpoint download script.
-   - Download the model weights.
+### 3. Install Dependencies
 
-   On Windows in the repository root:
-   ```batch
-   fetch_sparse.bat
-   ```
+With the virtual environment activated, install the required packages:
+```bash
+pip install torch onnx onnxruntime hydra-core pillow tqdm iopath opencv-python pyqt5
+```
+*Note: The `opencv-python` and `pyqt5` installs are needed for the Python test scripts.*
 
-   On macOS (assuming `fetch_sparse.sh` is available):
-   ```bash
-   chmod +x fetch_sparse.sh
-   ./fetch_sparse.sh
-   ```
+### 4. Generate ONNX Files
 
-2. **Create a Python Virtual Environment**
+Export the ONNX files by running:
+```bash
+python export/onnx_export.py --model_size tiny
+```
+This produces four `.onnx` files in `checkpoints/tiny/`:
+- `image_encoder_tiny.onnx`
+- `image_decoder_tiny.onnx`
+- `memory_attention_tiny.onnx`
+- `memory_encoder_tiny.onnx`
 
-   In the repository root, run:
-   ```bash
-   python -m venv sam2_env
-   ```
-   Then, activate the virtual environment.
+### 5. (Optional) Simplify the ONNX Models
 
-   - **Windows**:
-     ```bash
-     sam2_env\Scripts\activate
-     ```
-   - **macOS**:
-     ```bash
-     python3 -m venv sam2_env
-     source sam2_env/bin/activate
-     ```
+Some shape inference warnings or segmentation faults (especially on macOS) may occur due to dynamic shape paths. To mitigate this, install [onnx-simplifier](https://github.com/daquexian/onnx-simplifier):
+```bash
+pip install onnxsim
+```
+Then, for each exported file (using the **tiny** variant as an example), run:
+```bash
+python -m onnxsim checkpoints/tiny/image_encoder_tiny.onnx checkpoints/tiny/image_encoder_tiny_simplified.onnx
+python -m onnxsim checkpoints/tiny/image_decoder_tiny.onnx checkpoints/tiny/image_decoder_tiny_simplified.onnx
+python -m onnxsim checkpoints/tiny/memory_encoder_tiny.onnx checkpoints/tiny/memory_encoder_tiny_simplified.onnx
+python -m onnxsim checkpoints/tiny/memory_attention_tiny.onnx checkpoints/tiny/memory_attention_tiny_simplified.onnx
+```
 
-3. **Install Dependencies**
+### 6. Run Python Tests
 
-   With the virtual environment activated, install the required packages:
-   ```bash
-   pip install torch onnx onnxruntime hydra-core pillow tqdm iopath opencv-python pyqt5
-   ```
-   (The `opencv-python` and `pyqt5` install is needed for the Python test scripts.)
+Test the exported ONNX models by running:
+```bash
+python export/onnx_test_image.py --model_size tiny
+python export/onnx_test_video.py --model_size tiny
+```
+*Note:*  
+- The image test requires a `.jpg`/`.png` image.  
+- The video test requires a short video clip (e.g. `.mkv`, `.mp4`, etc.).  
+You can find short video samples at [filesamples.com](https://filesamples.com/formats/mkv) and [sample-videos.com](https://www.sample-videos.com/).
 
-4. **Generate ONNX Files**
+### 7. Compile & Run the C++ Wrapper
 
-   Run the export script to generate the ONNX files. The script accepts a `--model_size` argument with valid values: `base_plus`, `large`, `small`, or `tiny`. For example, to export the **tiny** model variant:
-   ```bash
-   python export/onnx_export.py --model_size tiny
-   ```
+#### 7.1 Download onnxruntime  
+Download and unzip the file from [onnxruntime-win-x64-gpu-1.20.0.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-win-x64-gpu-1.20.0.zip) (see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.20.0)).  
+Extract to a location like `C:\Program Files\onnxruntime-win-x64-gpu-1.20.0`.
 
-   This produces four `.onnx` files in `checkpoints/tiny/`:
-   - `image_encoder_tiny.onnx`
-   - `image_decoder_tiny.onnx`
-   - `memory_attention_tiny.onnx`
-   - `memory_encoder_tiny.onnx`
+#### 7.2 OpenCV  
+Install OpenCV (or point to an existing installation), e.g. located at `C:\Program Files\OpenCV\Release`.
 
-5. **(Optional) Simplify the ONNX Models**
+#### 7.3 CMake Configuration and Build
 
-   In some cases, you may experience shape inference warnings or segmentation faults (especially on macOS) due to dynamic shape paths. You can run [onnx-simplifier](https://github.com/daquexian/onnx-simplifier) to prune or unify these paths:
+Inside the `cpp` folder, create a `build_release` folder and run:
+```bash
+cmake -G "Visual Studio 17 2022" -DCMAKE_CONFIGURATION_TYPES=Release -DOpenCV_DIR="C:/Program Files/OpenCV/Release" -DONNXRUNTIME_DIR="C:/Program Files/onnxruntime-win-x64-gpu-1.20.0" ..
+cmake --build . --config Release
+```
 
-   ```bash
-   pip install onnxsim
-   ```
+#### 7.4 Run the Compiled Executable
 
-   Then, for each exported file (e.g. `image_encoder_tiny.onnx`), run:
+The compiled executable typically goes to `cpp/build_release/bin/Release`. For example, run:
+```bash
+./Segment.exe --onnx_test_image
+./Segment.exe --onnx_test_video
+```
 
-   ```bash
-   python -m onnxsim checkpoints/tiny/image_encoder_tiny.onnx checkpoints/tiny/image_encoder_tiny_simplified.onnx
-   python -m onnxsim checkpoints/tiny/image_decoder_tiny.onnx checkpoints/tiny/image_decoder_tiny_simplified.onnx
-   python -m onnxsim checkpoints/tiny/memory_encoder_tiny.onnx checkpoints/tiny/memory_encoder_tiny_simplified.onnx
-   python -m onnxsim checkpoints/tiny/memory_attention_tiny.onnx checkpoints/tiny/memory_attention_tiny_simplified.onnx
-   ```
+## macOS Setup & Execution
 
-   Repeat for `image_decoder_tiny.onnx`, `memory_encoder_tiny.onnx`, and `memory_attention_tiny.onnx`.  You can then use the simplified files in your downstream pipeline.  This often fixes shape warnings and can prevent segmentation faults on certain platforms.
+### 1. Fetch the SAM2 Sparse Checkout and Download Checkpoints
 
-6. **Run Python Tests**
+Assuming the `fetch_sparse.sh` script is available, run:
+```bash
+chmod +x fetch_sparse.sh
+./fetch_sparse.sh
+```
 
-   You can test the exported ONNX models by running the provided scripts:
-   ```bash
-   python export/onnx_test_image.py --model_size tiny
-   python export/onnx_test_video.py --model_size tiny
-   ```
-   The image test requires a `.jpg/.png` image; the video test requires a short video clip (e.g. `.mkv`, `.mp4`, etc.).
-   You can find short video samples in https://filesamples.com/formats/mkv and https://www.sample-videos.com/.
+### 2. Create a Python Virtual Environment
 
-7. **Compile & Run the C++ Wrapper**
+In the repository root, run:
+```bash
+python3 -m venv sam2_env
+```
+Then activate the virtual environment:
+```bash
+source sam2_env/bin/activate
+```
 
-   ### Windows
+### 3. Install Dependencies
 
-   1. **Download onnxruntime**  
-      For example:  
-      Download and unzip https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-win-x64-gpu-1.20.0.zip
-      (at https://github.com/microsoft/onnxruntime/releases/tag/v1.20.0).
-      Extract to a location like `C:\Program Files\onnxruntime-win-x64-gpu-1.20.0`.
-      Create a `build_release` folder inside `cpp` folder.
+With the virtual environment activated, install the required packages:
+```bash
+pip install torch onnx onnxruntime hydra-core pillow tqdm iopath opencv-python pyqt5
+```
 
-   2. **OpenCV**  
-      Install OpenCV (or point to an existing installation).  
-      Suppose you have `C:\Program Files\OpenCV\Release`.
+### 4. Generate ONNX Files
 
-   3. **CMake**  
-      Inside `cpp/build_release`:
-      ```bash
-      cmake -G "Visual Studio 17 2022" -DCMAKE_CONFIGURATION_TYPES=Release -DOpenCV_DIR="C:/Program Files/OpenCV/Release" -DONNXRUNTIME_DIR="C:/Program Files/onnxruntime-win-x64-gpu-1.20.0" ..
-      cmake --build . --config Release
-      ```
+Export the ONNX files by running:
+```bash
+python export/onnx_export.py --model_size tiny
+```
+This produces four `.onnx` files in `checkpoints/tiny/`:
+- `image_encoder_tiny.onnx`
+- `image_decoder_tiny.onnx`
+- `memory_attention_tiny.onnx`
+- `memory_encoder_tiny.onnx`
 
-   4. **Run**  
-      The compiled executable typically goes to `cpp/build_release/bin/Release`.  You can run, for example:
-      ```bash
-      ./Segment.exe --onnx_test_image
-      ./Segment.exe --onnx_test_video
-      ```
+### 5. (Optional) Simplify the ONNX Models
 
-   ### macOS
+To prune or unify dynamic shape paths, install onnx-simplifier:
+```bash
+pip install onnxsim
+```
+Then run the following commands for each file:
+```bash
+python -m onnxsim checkpoints/tiny/image_encoder_tiny.onnx checkpoints/tiny/image_encoder_tiny_simplified.onnx
+python -m onnxsim checkpoints/tiny/image_decoder_tiny.onnx checkpoints/tiny/image_decoder_tiny_simplified.onnx
+python -m onnxsim checkpoints/tiny/memory_encoder_tiny.onnx checkpoints/tiny/memory_encoder_tiny_simplified.onnx
+python -m onnxsim checkpoints/tiny/memory_attention_tiny.onnx checkpoints/tiny/memory_attention_tiny_simplified.onnx
+```
+Repeat for each file as needed.
 
-   On MacOS:
-   Download and unzip https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-win-arm64-1.21.0.zip
-   (at https://github.com/microsoft/onnxruntime/releases/tag/v1.21.0) in /opt/ directory.
-   Install opencv using `brew install opencv`.
-   Create a `models` folder inside `cpp` folder containing the `.onnx` files (called `image_decoder.onnx`, `image_encoder.onnx`, `memory_attention.onnx`, `memory_encoder.onnx`).
-   Create a `build_release` folder inside `cpp` folder.
-   Create a `package` folder inside `cpp` folder.
-   Run
-   ```bash
-   cmake -S . -B build_release -DCMAKE_BUILD_TYPE=Release -DOpenCV_DIR="/opt/homebrew/opt/opencv" -DONNXRUNTIME_DIR="/opt/onnxruntime-osx-arm64-1.21.0"
-   ```
-   Each time you want to build, run:
-   ```bash
-   cmake --build build_release
-   ```
-   Create the distributable app:
-   ```bash
-   cmake --install build_release --prefix $HOME/Documents/sam2-onnx-cpp/cpp/package
-   ```
-   Run the app either double clicking on it, or running
-   ```bash
-   cd package/Segment.app/Contents/MacOS
-   ./Segment --onnx_test_image
-   cd $HOME/Documents/sam2-onnx-cpp/cpp
-   ```
-   or
-   ```bash
-   cd package/Segment.app/Contents/MacOS
-   ./Segment --onnx_test_video
-   cd $HOME/Documents/sam2-onnx-cpp/cpp
-   ```
+### 6. Run Python Tests
+
+Test the exported ONNX models by running:
+```bash
+python export/onnx_test_image.py --model_size tiny
+python export/onnx_test_video.py --model_size tiny
+```
+*Note:*  
+- The image test requires a `.jpg`/`.png` image.  
+- The video test requires a short video clip (e.g. `.mkv`, `.mp4`, etc.).  
+Short video samples are available at [filesamples.com](https://filesamples.com/formats/mkv) and [sample-videos.com](https://www.sample-videos.com/).
+
+### 7. Compile & Run the C++ Wrapper
+
+#### 7.1 Download onnxruntime  
+Download and unzip [onnxruntime-win-arm64-1.21.0.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-win-arm64-1.21.0.zip) (see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.21.0)) into the `/opt/` directory.
+
+#### 7.2 Install OpenCV
+
+Install OpenCV using Homebrew:
+```bash
+brew install opencv
+```
+
+#### 7.3 Prepare the Models
+
+Create a `models` folder inside the `cpp` folder. Copy the four exported `.onnx` files into it and rename them as follows:
+- `image_decoder.onnx`
+- `image_encoder.onnx`
+- `memory_attention.onnx`
+- `memory_encoder.onnx`
+
+#### 7.4 Set Up Build Folders
+
+Inside the `cpp` folder, create both a `build_release` folder and a `package` folder.
+
+#### 7.5 CMake Configuration and Build
+
+In the `cpp` folder, run:
+```bash
+cmake -S . -B build_release -DCMAKE_BUILD_TYPE=Release -DOpenCV_DIR="/opt/homebrew/opt/opencv" -DONNXRUNTIME_DIR="/opt/onnxruntime-osx-arm64-1.21.0"
+```
+Then build the project:
+```bash
+cmake --build build_release
+```
+
+#### 7.6 Create the Distributable App
+
+Generate the app by running:
+```bash
+cmake --install build_release --prefix $HOME/Documents/sam2-onnx-cpp/cpp/package
+```
+
+#### 7.7 Run the App
+
+To run the app, either double-click it or run from the terminal.
+
+For the image test:
+```bash
+cd package/Segment.app/Contents/MacOS
+./Segment --onnx_test_image
+cd $HOME/Documents/sam2-onnx-cpp/cpp
+```
+
+For the video test:
+```bash
+cd package/Segment.app/Contents/MacOS
+./Segment --onnx_test_video
+cd $HOME/Documents/sam2-onnx-cpp/cpp
+```
 
 ## Project Structure
 
@@ -187,13 +244,11 @@ sam2-onnx-cpp/
 ## Additional Notes
 
 - The `fetch_sparse.bat` or `fetch_sparse.sh` script automates fetching only the required SAM2 directories and downloading model checkpoints.  
-- The `onnx_export.py` uses Hydra configs to build the SAM2 model, then exports four ONNX modules:
+- The `onnx_export.py` script uses Hydra configs to build the SAM2 model, then exports four ONNX modules:
   - **Image Encoder** (`image_encoder_*.onnx`)
   - **Image Decoder** (`image_decoder_*.onnx`)
   - **Memory Attention** (`memory_attention_*.onnx`)
   - **Memory Encoder** (`memory_encoder_*.onnx`)
-- If you see shape inference warnings or segmentation faults in onnxruntime (especially on macOS), **running onnx-simplifier** can remove leftover dynamic branches and fix many shape mismatch issues.
-- The simplified `.onnx` files may grow in size due to constant folding, but often become more stable at runtime.
 
 ## License
 
