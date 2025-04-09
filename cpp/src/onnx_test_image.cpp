@@ -16,8 +16,8 @@ struct AppState {
     SAM2 sam;
     cv::Mat originalImage;
     cv::Mat displayImage;
-    cv::Size imageSize;   // original image size
-    cv::Size inputSize;   // e.g. 1024x1024
+    Size imageSize;   // original image size
+    Size inputSize;   // e.g. 1024x1024
 
     // Instead of storing scaled points, store them in original coords
     vector<cv::Point> clickedPoints;
@@ -166,7 +166,8 @@ int runOnnxTestImage(int argc, char** argv)
         cerr << "[ERROR] Could not load image from " << imagePath << endl;
         return -1;
     }
-    state.imageSize = state.originalImage.size();
+    state.imageSize.width = state.originalImage.size().width;
+    state.imageSize.height = state.originalImage.size().height;
 
     // 4) Check for GPU availability
     bool cudaAvailable = false;
@@ -223,7 +224,7 @@ int runOnnxTestImage(int argc, char** argv)
     }
 
     cv::Mat resized;
-    cv::resize(state.originalImage, resized, state.inputSize);
+    cv::resize(state.originalImage, resized, cv::Size(state.inputSize.width, state.inputSize.height));
 
     // 7) Preprocess => runs the "ImageEncoder"
     auto preStart = high_resolution_clock::now();

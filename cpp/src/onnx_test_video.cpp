@@ -35,8 +35,8 @@ struct VideoAppState {
     SAM2* sam = nullptr;          // The SAM2 object
     cv::Mat firstFrame;           // Original BGR from the first frame
     cv::Mat displayFrame;         // Display with partial overlay
-    cv::Size originalSize;        // e.g. 960×540
-    cv::Size inputSize;           // e.g. 1024×1024 (model input)
+    Size originalSize;        // e.g. 960×540
+    Size inputSize;           // e.g. 1024×1024 (model input)
 
     // The user-chosen seeds in original coords
     std::vector<cv::Point> points;
@@ -269,7 +269,8 @@ int runOnnxTestVideo(int argc, char** argv)
     VideoAppState st;
     st.sam=&sam;
     firstFrameBGR.copyTo(st.firstFrame);
-    st.originalSize = st.firstFrame.size();
+    st.originalSize.width = st.firstFrame.size().width;
+    st.originalSize.height = st.firstFrame.size().height;
 
     // The "inputSize" is e.g. 1024×1024
     st.inputSize = sam.getInputSize();
@@ -280,7 +281,7 @@ int runOnnxTestVideo(int argc, char** argv)
 
     // Preprocess the first frame => single-frame usage
     cv::Mat resizedFirst;
-    cv::resize(firstFrameBGR, resizedFirst, st.inputSize);
+    cv::resize(firstFrameBGR, resizedFirst, cv::Size(st.inputSize.width, st.inputSize.height));
 
     auto preT0=std::chrono::steady_clock::now();
     if(!sam.preprocessImage(resizedFirst)){
@@ -383,7 +384,7 @@ int runOnnxTestVideo(int argc, char** argv)
 
         // We must resize EVERY frame to inputSize => no mismatch
         cv::Mat resizedFrame;
-        cv::resize(frameBGR, resizedFrame, st.inputSize);
+        cv::resize(frameBGR, resizedFrame, cv::Size(st.inputSize.width, st.inputSize.height));
 
         // On frame0 => seeds, else empty
         Prompts promptsToUse;
@@ -392,7 +393,7 @@ int runOnnxTestVideo(int argc, char** argv)
             std::cout<<"[INFO] Frame0 => user seeds.\n";
         }
 
-        cv::Mat mask= st.sam->InferMultiFrame(resizedFrame, frameBGR.size(), promptsToUse);
+        cv::Mat mask= st.sam->InferMultiFrame(resizedFrame, Size(frameBGR.size().width, frameBGR.size().height), promptsToUse);
         auto t1= std::chrono::steady_clock::now();
         double ms= std::chrono::duration<double,std::milli>(t1-t0).count();
         std::cout<<"[INFO] Frame "<<frameIndex<<" => "<< ms <<" ms\n";

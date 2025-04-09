@@ -3,7 +3,6 @@
 #include <stdexcept>
 #include <iostream>
 #include <sstream>
-#include <opencv2/opencv.hpp>
 #include <cstring> // for memcpy
 
 #ifdef _WIN32
@@ -69,16 +68,16 @@ bool SAM2::clearSessions()
     return true;
 }
 
-cv::Size SAM2::getInputSize()
+Size SAM2::getInputSize()
 {
     // Typically [1,3,1024,1024] => shape[2]=1024 (H), shape[3]=1024 (W)
     if (m_inputShapeEncoder.size() >= 4) {
-        return cv::Size(
+        return Size(
             static_cast<int>(m_inputShapeEncoder[3]),
             static_cast<int>(m_inputShapeEncoder[2])
         );
     }
-    return cv::Size(0, 0);
+    return Size(0, 0);
 }
 
 void SAM2::setupSessionOptions(Ort::SessionOptions &options,

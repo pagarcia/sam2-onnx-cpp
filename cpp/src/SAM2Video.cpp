@@ -9,12 +9,12 @@
 // --------------------
 // Multi-frame usage
 // --------------------
-void SAM2::setPrompts(const Prompts &prompts, const cv::Size &originalImageSize)
+void SAM2::setPrompts(const Prompts &prompts, const Size &originalImageSize)
 {
     m_promptPointCoords.clear();
     m_promptPointLabels.clear();
 
-    cv::Size encSize = getInputSize();
+    Size encSize = getInputSize();
     if(encSize.width <= 0 || encSize.height <= 0){
         std::cerr << "[WARN] setPrompts => invalid encoder size.\n";
         return;
@@ -46,7 +46,7 @@ void SAM2::setPrompts(const Prompts &prompts, const cv::Size &originalImageSize)
 }
 
 cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
-                              const cv::Size &originalSize,
+                              const Size &originalSize,
                               const Prompts &prompts)
 {
     if (!m_memAttentionSession || !m_memEncoderSession) {
@@ -66,8 +66,8 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
         auto t0 = std::chrono::steady_clock::now();
 
         // 1) normalize
-        cv::Size expected = getInputSize();
-        if(resizedFrame.size() != expected || resizedFrame.channels() != 3) {
+        Size expected = getInputSize();
+        if(resizedFrame.size().width != expected.width || resizedFrame.size().height != expected.height || resizedFrame.channels() != 3) {
             std::cerr << "[ERROR] frame0 => mismatch input.\n";
             return cv::Mat();
         }
@@ -157,9 +157,9 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
             int mw = (int)pmShape[3];
             cv::Mat lowRes(mh, mw, CV_32FC1, (void*)pm);
             cv::Mat upFloat;
-            cv::resize(lowRes, upFloat, originalSize, 0, 0, cv::INTER_LINEAR);
+            cv::resize(lowRes, upFloat, cv::Size(originalSize.width, originalSize.height), 0, 0, cv::INTER_LINEAR);
 
-            finalMask.create(originalSize, CV_8UC1);
+            finalMask.create(cv::Size(originalSize.width, originalSize.height), CV_8UC1);
             for(int r=0; r<finalMask.rows; r++){
                 const float* rowF = upFloat.ptr<float>(r);
                 uchar* rowB      = finalMask.ptr<uchar>(r);
@@ -231,8 +231,8 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
         std::cout << "[INFO] InferMultiFrame => we have memory => frameN.\n";
         auto tEnc0 = std::chrono::steady_clock::now();
 
-        cv::Size expected = getInputSize();
-        if(resizedFrame.size() != expected || resizedFrame.channels() != 3) {
+        Size expected = getInputSize();
+        if(resizedFrame.size().width != expected.width || resizedFrame.size().height != expected.height || resizedFrame.channels() != 3) {
             std::cerr << "[ERROR] frameN => mismatch input.\n";
             return cv::Mat();
         }
@@ -351,9 +351,9 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
             int mw = (int)pmShape[3];
             cv::Mat lowRes(mh, mw, CV_32FC1, (void*)pm);
             cv::Mat upFloat;
-            cv::resize(lowRes, upFloat, originalSize, 0, 0, cv::INTER_LINEAR);
+            cv::resize(lowRes, upFloat, cv::Size(originalSize.width, originalSize.height), 0, 0, cv::INTER_LINEAR);
 
-            finalMask.create(originalSize, CV_8UC1);
+            finalMask.create(cv::Size(originalSize.width, originalSize.height), CV_8UC1);
             for(int r=0; r<finalMask.rows; r++){
                 const float* rowF = upFloat.ptr<float>(r);
                 uchar* rowB      = finalMask.ptr<uchar>(r);

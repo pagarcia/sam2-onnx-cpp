@@ -39,6 +39,13 @@ struct Node {
     std::vector<int64_t> dim;
 };
 
+struct Size {
+    int width;
+    int height;
+    // Constructor for convenience
+    Size(int w = 0, int h = 0) : width(w), height(h) {}
+};
+
 class SAM2 {
 public:
     SAM2();
@@ -60,16 +67,16 @@ public:
 
     // For single-frame usage:
     bool preprocessImage(const cv::Mat &image);
-    cv::Mat InferSingleFrame(const cv::Size &originalSize);
+    cv::Mat InferSingleFrame(const Size &originalSize);
 
     // For multi-frame usage:
-    void setPrompts(const Prompts &prompts, const cv::Size &originalImageSize);
+    void setPrompts(const Prompts &prompts, const Size &originalImageSize);
     cv::Mat InferMultiFrame(const cv::Mat &resizedFrame,
-                            const cv::Size &originalSize,
+                            const Size &originalSize,
                             const Prompts &prompts);
 
     // Basic info
-    cv::Size getInputSize();
+    Size getInputSize();
     bool modelExists(const std::string &modelPath);
 
     // Optional label helpers
