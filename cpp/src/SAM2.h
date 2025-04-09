@@ -42,8 +42,24 @@ struct Node {
 struct Size {
     int width;
     int height;
-    // Constructor for convenience
     Size(int w = 0, int h = 0) : width(w), height(h) {}
+};
+
+struct Point {
+    int x;
+    int y;
+    Point(int xVal = 0, int yVal = 0) : x(xVal), y(yVal) {}
+};
+
+struct Rect {
+    Point topLeft; // Top-left coordinate of the rectangle
+    Size size;     // Size (width and height) of the rectangle
+
+    // Constructor with default values for coordinate and size
+    Rect(int x = 0, int y = 0, int width = 0, int height = 0) : topLeft(x, y), size(width, height) {}
+
+    // Helper method to get bottom-right coordinate
+    Point br() const { return Point(topLeft.x + size.width, topLeft.y + size.height); }
 };
 
 class SAM2 {
