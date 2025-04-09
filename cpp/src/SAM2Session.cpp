@@ -1,4 +1,4 @@
-#include "SAM2_Session.h"
+#include "SAM2Session.h"
 
 #include <fstream>
 #include <stdexcept>
@@ -27,12 +27,12 @@ static std::wstring strToWstr(const std::string &str)
 // --------------------
 // Constructor / Destructor
 // --------------------
-SAM2_Session::SAM2_Session()
+SAM2Session::SAM2Session()
 {
     // Could init stuff here if needed
 }
 
-SAM2_Session::~SAM2_Session()
+SAM2Session::~SAM2Session()
 {
     clearAllSessions();
 }
@@ -40,7 +40,7 @@ SAM2_Session::~SAM2_Session()
 // --------------------
 // Clear / reset
 // --------------------
-void SAM2_Session::clearAllSessions()
+void SAM2Session::clearAllSessions()
 {
     // Reset all session pointers
     img_encoder_session_.reset();
@@ -65,7 +65,7 @@ void SAM2_Session::clearAllSessions()
 // --------------------
 // Check file existence
 // --------------------
-bool SAM2_Session::modelFileExists(const std::string &modelPath)
+bool SAM2Session::modelFileExists(const std::string &modelPath)
 {
     std::ifstream f(modelPath.c_str());
     return f.good();
@@ -75,7 +75,7 @@ bool SAM2_Session::modelFileExists(const std::string &modelPath)
 // Get encoder input size
 // e.g. if shape is [1,3,1024,1024], returns (1024,1024)
 // --------------------
-cv::Size SAM2_Session::getEncoderInputSize() const
+cv::Size SAM2Session::getEncoderInputSize() const
 {
     if (encoderInputShape_.size() >= 4) {
         return cv::Size(
@@ -89,7 +89,7 @@ cv::Size SAM2_Session::getEncoderInputSize() const
 // --------------------
 // Initialize image (encoder+decoder)
 // --------------------
-bool SAM2_Session::initializeImage(const std::string &encoderPath,
+bool SAM2Session::initializeImage(const std::string &encoderPath,
                                    const std::string &decoderPath,
                                    int threadsNumber,
                                    const std::string &device)
@@ -224,7 +224,7 @@ bool SAM2_Session::initializeImage(const std::string &encoderPath,
 // --------------------
 // Initialize memory-based models
 // --------------------
-bool SAM2_Session::initializeVideo(const std::string &memAttentionPath,
+bool SAM2Session::initializeVideo(const std::string &memAttentionPath,
                                    const std::string &memEncoderPath,
                                    int threadsNumber,
                                    const std::string &device)
@@ -341,7 +341,7 @@ bool SAM2_Session::initializeVideo(const std::string &memAttentionPath,
 // Setup session options
 // (CPU, CUDA, CoreML, etc.)
 // --------------------
-void SAM2_Session::setupSessionOptions(Ort::SessionOptions &options,
+void SAM2Session::setupSessionOptions(Ort::SessionOptions &options,
                                        int threadsNumber,
                                        GraphOptimizationLevel optLevel,
                                        const std::string &device)
@@ -396,7 +396,7 @@ void SAM2_Session::setupSessionOptions(Ort::SessionOptions &options,
 // runSession helper
 // --------------------
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2_Session::runSession(Ort::Session* session,
+SAM2Session::runSession(Ort::Session* session,
                          const std::vector<Node> &inputNodes,
                          const std::vector<Node> &outputNodes,
                          const std::vector<Ort::Value> &inputTensors,
@@ -439,7 +439,7 @@ SAM2_Session::runSession(Ort::Session* session,
 // Model sub-runs
 // --------------------
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2_Session::runImageEncoder(const std::vector<Ort::Value> &inputTensors)
+SAM2Session::runImageEncoder(const std::vector<Ort::Value> &inputTensors)
 {
     return runSession(img_encoder_session_.get(),
                       img_encoder_input_nodes_,
@@ -449,7 +449,7 @@ SAM2_Session::runImageEncoder(const std::vector<Ort::Value> &inputTensors)
 }
 
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2_Session::runImageDecoder(const std::vector<Ort::Value> &inputTensors)
+SAM2Session::runImageDecoder(const std::vector<Ort::Value> &inputTensors)
 {
     return runSession(img_decoder_session_.get(),
                       img_decoder_input_nodes_,
@@ -459,7 +459,7 @@ SAM2_Session::runImageDecoder(const std::vector<Ort::Value> &inputTensors)
 }
 
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2_Session::runMemAttention(const std::vector<Ort::Value> &inputTensors)
+SAM2Session::runMemAttention(const std::vector<Ort::Value> &inputTensors)
 {
     return runSession(mem_attention_session_.get(),
                       mem_attention_input_nodes_,
@@ -469,7 +469,7 @@ SAM2_Session::runMemAttention(const std::vector<Ort::Value> &inputTensors)
 }
 
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2_Session::runMemEncoder(const std::vector<Ort::Value> &inputTensors)
+SAM2Session::runMemEncoder(const std::vector<Ort::Value> &inputTensors)
 {
     return runSession(mem_encoder_session_.get(),
                       mem_encoder_input_nodes_,

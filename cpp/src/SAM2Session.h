@@ -1,5 +1,5 @@
-#ifndef SAM2_SESSION_H
-#define SAM2_SESSION_H
+#ifndef SAM2SESSION_H
+#define SAM2SESSION_H
 
 #include <onnxruntime_cxx_api.h>
 #include <cpu_provider_factory.h>
@@ -19,45 +19,21 @@ struct Node {
     std::vector<int64_t> dim;
 };
 
-/**
- *  SAM2_Session
- *
- *  A class that manages all the ONNX Runtime sessions (encoder, decoder,
- *  memory-attention, memory-encoder), including the environment, session 
- *  options, node names, shapes, and the actual session->Run(...) calls.
- */
-class SAM2_Session {
+class SAM2Session {
 public:
-    SAM2_Session();
-    ~SAM2_Session();
+    SAM2Session();
+    ~SAM2Session();
 
-    /**
-     *  Loads the image encoder + decoder models.
-     *
-     *  @param encoderPath Path to image-encoder .onnx file.
-     *  @param decoderPath Path to image-decoder .onnx file.
-     *  @param threadsNumber Number of CPU threads (if using CPU).
-     *  @param device Device to run on ("cpu", "cuda:0", "coreml", etc.).
-     *  @return True if successfully loaded, false otherwise.
-     */
     bool initializeImage(const std::string &encoderPath,
                          const std::string &decoderPath,
                          int threadsNumber,
                          const std::string &device = "cpu");
 
-    /**
-     *  Loads the memory-based models (mem-attention + mem-encoder).
-     *  This is optional if doing multi-frame tasks.
-     */
     bool initializeVideo(const std::string &memAttentionPath,
                          const std::string &memEncoderPath,
                          int threadsNumber,
                          const std::string &device = "cpu");
 
-    /**
-     *  Reset / clear all session pointers and shapes.
-     *  Automatically called in destructor.
-     */
     void clearAllSessions();
 
     // -------------------
@@ -76,27 +52,14 @@ public:
     std::variant<std::vector<Ort::Value>, std::string>
         runMemEncoder(const std::vector<Ort::Value> &inputTensors);
 
-    /**
-     *  Helper to configure session options (threads, device, GPU vs CPU, etc.).
-     *  You can reuse your existing logic or adapt as needed.
-     */
     static void setupSessionOptions(Ort::SessionOptions &options,
                                     int threadsNumber,
                                     GraphOptimizationLevel optLevel,
                                     const std::string &device);
 
-    // -------------------
-    // Optional: Provide a way to query the encoder input shape 
-    //           (if needed by your higher-level logic)
-    // -------------------
     cv::Size getEncoderInputSize() const;
 
-    // Additional getters if you want to expose shapes for other model outputs:
-    // e.g. getEncoderOutputShape(), etc.
-
 public:
-    // You may store this as public if needed by your external code,
-    // or keep it private and only expose "createTensor" or run methods
     Ort::MemoryInfo memoryInfo_ = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
 private:
@@ -151,4 +114,4 @@ private:
     std::vector<int64_t> encoderInputShape_;
 };
 
-#endif // SAM2_SESSION_H
+#endif // SAM2SESSION_H
