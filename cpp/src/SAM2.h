@@ -54,12 +54,8 @@ struct Point {
 struct Rect {
     Point topLeft; // Top-left coordinate of the rectangle
     Size size;     // Size (width and height) of the rectangle
-
-    // Constructor with default values for coordinate and size
     Rect(int x = 0, int y = 0, int width = 0, int height = 0) : topLeft(x, y), size(width, height) {}
-
-    // Helper method to get bottom-right coordinate
-    Point br() const { return Point(topLeft.x + size.width, topLeft.y + size.height); }
+    Point bottomRight() const { return Point(topLeft.x + size.width, topLeft.y + size.height); }
 };
 
 class SAM2 {
