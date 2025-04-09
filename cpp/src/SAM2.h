@@ -28,10 +28,25 @@ Ort::Value createTensor(const Ort::MemoryInfo &memoryInfo,
     );
 }
 
+struct Point {
+    int x;
+    int y;
+    Point(int xVal = 0, int yVal = 0) : x(xVal), y(yVal) {}
+};
+
+struct Rect {
+    int x; // x coordinate of the top-left corner 
+    int y; // y coordinate of the top-left corner
+    int width; // width of the rectangle 
+    int height; // height of the rectangle 
+    Rect(int xVal = 0, int yVal = 0, int w = 0, int h = 0) : x(xVal), y(yVal), width(w), height(h) {}
+    Point br() const { return Point(x + width, y + height); }
+};
+
 struct Prompts {
-    std::vector<cv::Point> points;
+    std::vector<Point> points;
     std::vector<int>       pointLabels;
-    std::vector<cv::Rect>  rects;
+    std::vector<Rect>  rects;
 };
 
 struct Node {
@@ -43,19 +58,6 @@ struct Size {
     int width;
     int height;
     Size(int w = 0, int h = 0) : width(w), height(h) {}
-};
-
-struct Point {
-    int x;
-    int y;
-    Point(int xVal = 0, int yVal = 0) : x(xVal), y(yVal) {}
-};
-
-struct Rect {
-    Point topLeft; // Top-left coordinate of the rectangle
-    Size size;     // Size (width and height) of the rectangle
-    Rect(int x = 0, int y = 0, int width = 0, int height = 0) : topLeft(x, y), size(width, height) {}
-    Point bottomRight() const { return Point(topLeft.x + size.width, topLeft.y + size.height); }
 };
 
 class SAM2 {
@@ -92,10 +94,10 @@ public:
     bool modelExists(const std::string &modelPath);
 
     // Optional label helpers
-    void setRectsLabels(const std::list<cv::Rect> &rects,
+    void setRectsLabels(const std::list<Rect> &rects,
                         std::vector<float> *inputPointValues,
                         std::vector<float> *inputLabelValues);
-    void setPointsLabels(const std::list<cv::Point> &points,
+    void setPointsLabels(const std::list<Point> &points,
                          int label,
                          std::vector<float> *inputPointValues,
                          std::vector<float> *inputLabelValues);

@@ -20,7 +20,7 @@ struct AppState {
     Size inputSize;   // e.g. 1024x1024
 
     // Instead of storing scaled points, store them in original coords
-    vector<cv::Point> clickedPoints;
+    vector<Point> clickedPoints;
     vector<int> pointLabels; // 1=positive, 0=negative
 };
 
@@ -59,7 +59,7 @@ static void updateDisplay(AppState* state) {
             cv::Scalar color = (state->pointLabels[i] == 1)
                                ? cv::Scalar(0, 0, 255)   // red
                                : cv::Scalar(255, 0, 0); // blue
-            cv::circle(overlayed, state->clickedPoints[i], 5, color, -1);
+            cv::circle(overlayed, cv::Point(state->clickedPoints[i].x, state->clickedPoints[i].y), 5, color, -1);
         }
         overlayed.copyTo(state->displayImage);
     }
@@ -86,7 +86,7 @@ static void onMouse(int event, int x, int y, int, void* userdata) {
     cout << "[INFO] " << (positive ? "Positive" : "Negative")
          << " point at (" << x << ", " << y << ").\n";
 
-    state->clickedPoints.push_back(cv::Point(x, y));
+    state->clickedPoints.push_back(Point(x, y));
     state->pointLabels.push_back(positive ? 1 : 0);
 
     updateDisplay(state);

@@ -162,7 +162,7 @@ cv::Mat SAM2::InferSingleFrame(const Size &originalSize)
 // --------------------
 // Optional label helpers
 // --------------------
-void SAM2::setRectsLabels(const std::list<cv::Rect> &rects,
+void SAM2::setRectsLabels(const std::list<Rect> &rects,
                           std::vector<float> *inputPointValues,
                           std::vector<float> *inputLabelValues)
 {
@@ -181,7 +181,7 @@ void SAM2::setRectsLabels(const std::list<cv::Rect> &rects,
     }
 }
 
-void SAM2::setPointsLabels(const std::list<cv::Point> &points,
+void SAM2::setPointsLabels(const std::list<Point> &points,
                            int label,
                            std::vector<float> *inputPointValues,
                            std::vector<float> *inputLabelValues)

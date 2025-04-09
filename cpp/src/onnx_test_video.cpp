@@ -39,7 +39,7 @@ struct VideoAppState {
     Size inputSize;           // e.g. 1024×1024 (model input)
 
     // The user-chosen seeds in original coords
-    std::vector<cv::Point> points;
+    std::vector<Point> points;
     std::vector<int>       labels; // 1=FG, 0=BG
 };
 
@@ -89,7 +89,7 @@ static void updateFirstFrameDisplay(VideoAppState* st)
         cv::Scalar color = (st->labels[i]==1)
                            ? cv::Scalar(0,0,255)
                            : cv::Scalar(255,0,0);
-        cv::circle(overlayed, st->points[i], 5, color, -1);
+        cv::circle(overlayed, cv::Point(st->points[i].x, st->points[i].y), 5, color, -1);
     }
 
     overlayed.copyTo(st->displayFrame);
@@ -120,7 +120,7 @@ static void onMouseFirstFrame(int event, int x, int y, int, void* userdata)
         if (x>=st->originalSize.width)  x=st->originalSize.width -1;
         if (y>=st->originalSize.height) y=st->originalSize.height-1;
 
-        st->points.push_back(cv::Point(x,y));
+        st->points.push_back(Point(x,y));
         st->labels.push_back(fg?1:0);
 
         // Show partial
