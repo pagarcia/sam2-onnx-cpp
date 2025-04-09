@@ -11,15 +11,9 @@
 /** Utility to convert std::string to wide string on Windows. */
 static std::wstring strToWstr(const std::string &str)
 {
-    int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0,
-                                         str.c_str(),
-                                         (int)str.size(),
-                                         NULL, 0);
+    int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.size(), NULL, 0);
     std::wstring wstr(sizeNeeded, 0);
-    MultiByteToWideChar(CP_UTF8, 0,
-                        str.c_str(),
-                        (int)str.size(),
-                        &wstr[0], sizeNeeded);
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.size(), &wstr[0], sizeNeeded);
     return wstr;
 }
 #endif
@@ -45,29 +39,29 @@ bool SAM2::clearSessions()
 {
     try {
         // Reset all session pointers
-        img_encoder_session.reset();
-        img_decoder_session.reset();
-        mem_attention_session.reset();
-        mem_encoder_session.reset();
+        m_imgEncoderSession.reset();
+        m_imgDecoderSession.reset();
+        m_memAttentionSession.reset();
+        m_memEncoderSession.reset();
 
         // Clear out shape/data vectors
-        inputShapeEncoder.clear();
-        outputShapeEncoder.clear();
-        highResFeatures1Shape.clear();
-        highResFeatures2Shape.clear();
+        m_inputShapeEncoder.clear();
+        m_outputShapeEncoder.clear();
+        m_highResFeatures1Shape.clear();
+        m_highResFeatures2Shape.clear();
 
-        outputTensorValuesEncoder.clear();
-        highResFeatures1.clear();
-        highResFeatures2.clear();
+        m_outputTensorValuesEncoder.clear();
+        m_highResFeatures1.clear();
+        m_highResFeatures2.clear();
 
         // Reset memory states for multi-frame usage
-        hasMemory_ = false;
-        maskMemFeatures_.clear();
-        maskMemFeaturesShape_.clear();
-        maskMemPosEnc_.clear();
-        maskMemPosEncShape_.clear();
-        temporalCode_.clear();
-        temporalCodeShape_.clear();
+        m_hasMemory = false;
+        m_maskMemFeatures.clear();
+        m_maskMemFeaturesShape.clear();
+        m_maskMemPosEnc.clear();
+        m_maskMemPosEncShape.clear();
+        m_temporalCode.clear();
+        m_temporalCodeShape.clear();
     }
     catch(...) {
         return false;
@@ -78,10 +72,10 @@ bool SAM2::clearSessions()
 cv::Size SAM2::getInputSize()
 {
     // Typically [1,3,1024,1024] => shape[2]=1024 (H), shape[3]=1024 (W)
-    if (inputShapeEncoder.size() >= 4) {
+    if (m_inputShapeEncoder.size() >= 4) {
         return cv::Size(
-            static_cast<int>(inputShapeEncoder[3]),
-            static_cast<int>(inputShapeEncoder[2])
+            static_cast<int>(m_inputShapeEncoder[3]),
+            static_cast<int>(m_inputShapeEncoder[2])
         );
     }
     return cv::Size(0, 0);
@@ -163,108 +157,85 @@ bool SAM2::initialize(const std::string &encoderPath,
     }
 
     // Configure session options
-    setupSessionOptions(encoderOptions, threadsNumber,
-                        GraphOptimizationLevel::ORT_ENABLE_ALL, device);
-    setupSessionOptions(decoderOptions, threadsNumber,
-                        GraphOptimizationLevel::ORT_ENABLE_ALL, device);
+    setupSessionOptions(m_encoderOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
+    setupSessionOptions(m_decoderOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
 
     try {
     #ifdef _WIN32
         std::wstring wEnc = strToWstr(encoderPath);
         std::wstring wDec = strToWstr(decoderPath);
 
-        img_encoder_session = std::make_unique<Ort::Session>(
-            encoderEnv, wEnc.c_str(), encoderOptions
-        );
-        img_decoder_session = std::make_unique<Ort::Session>(
-            decoderEnv, wDec.c_str(), decoderOptions
-        );
+        m_imgEncoderSession = std::make_unique<Ort::Session>(m_encoderEnv, wEnc.c_str(), m_encoderOptions);
+        m_imgDecoderSession = std::make_unique<Ort::Session>(m_decoderEnv, wDec.c_str(), m_decoderOptions);
     #else
-        img_encoder_session = std::make_unique<Ort::Session>(
-            encoderEnv, encoderPath.c_str(), encoderOptions
-        );
-        img_decoder_session = std::make_unique<Ort::Session>(
-            decoderEnv, decoderPath.c_str(), decoderOptions
-        );
+        m_imgEncoderSession = std::make_unique<Ort::Session>(m_encoderEnv, encoderPath.c_str(), m_encoderOptions);
+        m_imgDecoderSession = std::make_unique<Ort::Session>(m_decoderEnv, decoderPath.c_str(), m_decoderOptions);
     #endif
 
         // Query shapes for the encoder's 3 main outputs
         {
-            auto encInputInfo = img_encoder_session
-                                  ->GetInputTypeInfo(0)
-                                  .GetTensorTypeAndShapeInfo();
-            inputShapeEncoder = encInputInfo.GetShape();
+            auto encInputInfo = m_imgEncoderSession->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo();
+            m_inputShapeEncoder = encInputInfo.GetShape();
 
-            auto out0Info = img_encoder_session->GetOutputTypeInfo(0)
-                              .GetTensorTypeAndShapeInfo();
-            outputShapeEncoder = out0Info.GetShape();
+            auto out0Info = m_imgEncoderSession->GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo();
+            m_outputShapeEncoder = out0Info.GetShape();
 
-            auto out1Info = img_encoder_session->GetOutputTypeInfo(1)
-                              .GetTensorTypeAndShapeInfo();
-            highResFeatures1Shape = out1Info.GetShape();
+            auto out1Info = m_imgEncoderSession->GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo();
+            m_highResFeatures1Shape = out1Info.GetShape();
 
-            auto out2Info = img_encoder_session->GetOutputTypeInfo(2)
-                              .GetTensorTypeAndShapeInfo();
-            highResFeatures2Shape = out2Info.GetShape();
+            auto out2Info = m_imgEncoderSession->GetOutputTypeInfo(2).GetTensorTypeAndShapeInfo();
+            m_highResFeatures2Shape = out2Info.GetShape();
         }
 
         // Gather input/output node info for the encoder
         {
             Ort::AllocatorWithDefaultOptions alloc;
-            img_encoder_input_nodes.clear();
-            size_t inCountEnc = img_encoder_session->GetInputCount();
+            m_imgEncoderInputNodes.clear();
+            size_t inCountEnc = m_imgEncoderSession->GetInputCount();
             for (size_t i = 0; i < inCountEnc; i++) {
                 Node node;
-                auto inNamePtr = img_encoder_session->GetInputNameAllocated(i, alloc);
+                auto inNamePtr = m_imgEncoderSession->GetInputNameAllocated(i, alloc);
                 node.name = std::string(inNamePtr.get());
-                auto shape = img_encoder_session
-                               ->GetInputTypeInfo(i)
-                               .GetTensorTypeAndShapeInfo().GetShape();
+                auto shape = m_imgEncoderSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
-                img_encoder_input_nodes.push_back(std::move(node));
+                m_imgEncoderInputNodes.push_back(std::move(node));
             }
 
-            img_encoder_output_nodes.clear();
-            size_t outCountEnc = img_encoder_session->GetOutputCount();
+            m_imgEncoderOutputNodes.clear();
+            size_t outCountEnc = m_imgEncoderSession->GetOutputCount();
             for (size_t i = 0; i < outCountEnc; i++) {
                 Node node;
-                auto outNamePtr = img_encoder_session->GetOutputNameAllocated(i, alloc);
+                auto outNamePtr = m_imgEncoderSession->GetOutputNameAllocated(i, alloc);
                 node.name = std::string(outNamePtr.get());
-                auto shape = img_encoder_session
-                               ->GetOutputTypeInfo(i)
-                               .GetTensorTypeAndShapeInfo().GetShape();
+                auto shape = m_imgEncoderSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
-                img_encoder_output_nodes.push_back(std::move(node));
+                m_imgEncoderOutputNodes.push_back(std::move(node));
             }
         }
 
         // Gather input/output node info for the decoder
         {
             Ort::AllocatorWithDefaultOptions alloc;
-            img_decoder_input_nodes.clear();
-            size_t inCountDec = img_decoder_session->GetInputCount();
+            m_imgDecoderInputNodes.clear();
+            size_t inCountDec = m_imgDecoderSession->GetInputCount();
             for (size_t i = 0; i < inCountDec; i++) {
                 Node node;
-                auto inNamePtr = img_decoder_session->GetInputNameAllocated(i, alloc);
+                auto inNamePtr = m_imgDecoderSession->GetInputNameAllocated(i, alloc);
                 node.name = std::string(inNamePtr.get());
-                auto shape = img_decoder_session
-                               ->GetInputTypeInfo(i)
-                               .GetTensorTypeAndShapeInfo().GetShape();
+                auto shape = m_imgDecoderSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
-                img_decoder_input_nodes.push_back(std::move(node));
+                m_imgDecoderInputNodes.push_back(std::move(node));
             }
 
-            img_decoder_output_nodes.clear();
-            size_t outCountDec = img_decoder_session->GetOutputCount();
+            m_imgDecoderOutputNodes.clear();
+            size_t outCountDec = m_imgDecoderSession->GetOutputCount();
             for (size_t i = 0; i < outCountDec; i++) {
                 Node node;
-                auto outNamePtr = img_decoder_session->GetOutputNameAllocated(i, alloc);
+                auto outNamePtr = m_imgDecoderSession->GetOutputNameAllocated(i, alloc);
                 node.name = std::string(outNamePtr.get());
-                auto shape = img_decoder_session
-                               ->GetOutputTypeInfo(i)
-                               .GetTensorTypeAndShapeInfo().GetShape();
+                auto shape = m_imgDecoderSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
-                img_decoder_output_nodes.push_back(std::move(node));
+                m_imgDecoderOutputNodes.push_back(std::move(node));
             }
         }
 
@@ -294,86 +265,68 @@ bool SAM2::initializeVideo(const std::string &encoderPath,
         return false;
     }
 
-    setupSessionOptions(memAttentionOptions, threadsNumber,
-                        GraphOptimizationLevel::ORT_ENABLE_ALL, device);
-    setupSessionOptions(memEncoderOptions, threadsNumber,
-                        GraphOptimizationLevel::ORT_ENABLE_ALL, device);
+    setupSessionOptions(m_memAttentionOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
+    setupSessionOptions(m_memEncoderOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
 
     try {
     #ifdef _WIN32
         std::wstring wAttn = strToWstr(memAttentionPath);
         std::wstring wEnc2 = strToWstr(memEncoderPath);
 
-        mem_attention_session = std::make_unique<Ort::Session>(
-            memAttentionEnv, wAttn.c_str(), memAttentionOptions
-        );
-        mem_encoder_session  = std::make_unique<Ort::Session>(
-            memEncoderEnv, wEnc2.c_str(), memEncoderOptions
-        );
+        m_memAttentionSession = std::make_unique<Ort::Session>(m_memAttentionEnv, wAttn.c_str(), m_memAttentionOptions);
+        m_memEncoderSession  = std::make_unique<Ort::Session>(m_memEncoderEnv, wEnc2.c_str(), m_memEncoderOptions);
     #else
-        mem_attention_session = std::make_unique<Ort::Session>(
-            memAttentionEnv, memAttentionPath.c_str(), memAttentionOptions
-        );
-        mem_encoder_session  = std::make_unique<Ort::Session>(
-            memEncoderEnv, memEncoderPath.c_str(), memEncoderOptions
-        );
+        m_memAttentionSession = std::make_unique<Ort::Session>(m_memAttentionEnv, memAttentionPath.c_str(), m_memAttentionOptions);
+        m_memEncoderSession  = std::make_unique<Ort::Session>(m_memEncoderEnv, memEncoderPath.c_str(), m_memEncoderOptions);
     #endif
 
         // gather node info for mem_attention
         {
             Ort::AllocatorWithDefaultOptions alloc;
-            mem_attention_input_nodes.clear();
-            size_t inCount= mem_attention_session->GetInputCount();
+            m_memAttentionInputNodes.clear();
+            size_t inCount= m_memAttentionSession->GetInputCount();
             for(size_t i=0; i<inCount; i++){
                 Node node;
-                auto inName= mem_attention_session->GetInputNameAllocated(i,alloc);
+                auto inName= m_memAttentionSession->GetInputNameAllocated(i,alloc);
                 node.name= std::string(inName.get());
-                auto shape= mem_attention_session
-                              ->GetInputTypeInfo(i)
-                              .GetTensorTypeAndShapeInfo().GetShape();
+                auto shape= m_memAttentionSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
-                mem_attention_input_nodes.push_back(std::move(node));
+                m_memAttentionInputNodes.push_back(std::move(node));
             }
-            mem_attention_output_nodes.clear();
-            size_t outCount= mem_attention_session->GetOutputCount();
+            m_memAttentionOutputNodes.clear();
+            size_t outCount= m_memAttentionSession->GetOutputCount();
             for(size_t i=0; i<outCount; i++){
                 Node node;
-                auto outName= mem_attention_session->GetOutputNameAllocated(i,alloc);
+                auto outName= m_memAttentionSession->GetOutputNameAllocated(i,alloc);
                 node.name= std::string(outName.get());
-                auto shape= mem_attention_session
-                              ->GetOutputTypeInfo(i)
-                              .GetTensorTypeAndShapeInfo().GetShape();
+                auto shape= m_memAttentionSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
-                mem_attention_output_nodes.push_back(std::move(node));
+                m_memAttentionOutputNodes.push_back(std::move(node));
             }
         }
 
         // gather node info for mem_encoder
         {
             Ort::AllocatorWithDefaultOptions alloc;
-            mem_encoder_input_nodes.clear();
-            size_t inCount= mem_encoder_session->GetInputCount();
+            m_memEncoderInputNodes.clear();
+            size_t inCount= m_memEncoderSession->GetInputCount();
             for(size_t i=0; i<inCount; i++){
                 Node node;
-                auto inName= mem_encoder_session->GetInputNameAllocated(i,alloc);
+                auto inName= m_memEncoderSession->GetInputNameAllocated(i,alloc);
                 node.name= std::string(inName.get());
-                auto shape= mem_encoder_session
-                             ->GetInputTypeInfo(i)
-                             .GetTensorTypeAndShapeInfo().GetShape();
+                auto shape= m_memEncoderSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
-                mem_encoder_input_nodes.push_back(std::move(node));
+                m_memEncoderInputNodes.push_back(std::move(node));
             }
-            mem_encoder_output_nodes.clear();
-            size_t outCount= mem_encoder_session->GetOutputCount();
+            m_memEncoderOutputNodes.clear();
+            size_t outCount= m_memEncoderSession->GetOutputCount();
             for(size_t i=0; i<outCount; i++){
                 Node node;
-                auto outName= mem_encoder_session->GetOutputNameAllocated(i,alloc);
+                auto outName= m_memEncoderSession->GetOutputNameAllocated(i,alloc);
                 node.name= std::string(outName.get());
-                auto shape= mem_encoder_session
-                             ->GetOutputTypeInfo(i)
-                             .GetTensorTypeAndShapeInfo().GetShape();
+                auto shape= m_memEncoderSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
-                mem_encoder_output_nodes.push_back(std::move(node));
+                m_memEncoderOutputNodes.push_back(std::move(node));
             }
         }
 
@@ -407,11 +360,11 @@ std::vector<float> SAM2::normalizeBGR(const cv::Mat &bgrImg)
 
             float b = pix[0]/255.f;
             float g = pix[1]/255.f;
-            float r_ = pix[2]/255.f;
+            float r = pix[2]/255.f;
 
-            data[idx + planeSize*0] = (r_ - MEAN_R) / STD_R;  // R-plane
-            data[idx + planeSize*1] = (g  - MEAN_G) / STD_G;  // G-plane
-            data[idx + planeSize*2] = (b  - MEAN_B) / STD_B;  // B-plane
+            data[idx + planeSize*0] = (r - m_MEAN_R) / m_STD_R;  // R-plane
+            data[idx + planeSize*1] = (g - m_MEAN_G) / m_STD_G;  // G-plane
+            data[idx + planeSize*2] = (b - m_MEAN_B) / m_STD_B;  // B-plane
         }
     }
     return data;
@@ -433,7 +386,7 @@ bool SAM2::preprocessImage(const cv::Mat &image)
         std::vector<float> data = normalizeBGR(image);
 
         // Create an input tensor
-        Ort::Value inTensor = createTensor<float>(memoryInfo, data, inputShapeEncoder);
+        Ort::Value inTensor = createTensor<float>(m_memoryInfo, data, m_inputShapeEncoder);
 
         std::vector<Ort::Value> encInputs;
         encInputs.reserve(1);
@@ -441,8 +394,7 @@ bool SAM2::preprocessImage(const cv::Mat &image)
 
         auto encRes = runImageEncoder(encInputs);
         if(encRes.index() == 1){
-            std::cerr << "[ERROR] preprocessImage => "
-                      << std::get<std::string>(encRes) << "\n";
+            std::cerr << "[ERROR] preprocessImage => " << std::get<std::string>(encRes) << "\n";
             return false;
         }
 
@@ -456,20 +408,20 @@ bool SAM2::preprocessImage(const cv::Mat &image)
         {
             float* p = encOuts[0].GetTensorMutableData<float>();
             size_t ct = 1;
-            for(auto d : outputShapeEncoder) ct *= (size_t)d;
-            outputTensorValuesEncoder.assign(p, p+ct);
+            for(auto d : m_outputShapeEncoder) ct *= (size_t)d;
+            m_outputTensorValuesEncoder.assign(p, p+ct);
         }
         {
             float* p = encOuts[1].GetTensorMutableData<float>();
             size_t ct = 1;
-            for(auto d : highResFeatures1Shape) ct *= (size_t)d;
-            highResFeatures1.assign(p, p+ct);
+            for(auto d : m_highResFeatures1Shape) ct *= (size_t)d;
+            m_highResFeatures1.assign(p, p+ct);
         }
         {
             float* p = encOuts[2].GetTensorMutableData<float>();
             size_t ct = 1;
-            for(auto d : highResFeatures2Shape) ct *= (size_t)d;
-            highResFeatures2.assign(p, p+ct);
+            for(auto d : m_highResFeatures2Shape) ct *= (size_t)d;
+            m_highResFeatures2.assign(p, p+ct);
         }
         return true;
     }
@@ -481,12 +433,12 @@ bool SAM2::preprocessImage(const cv::Mat &image)
 
 cv::Mat SAM2::InferSingleFrame(const cv::Size &originalSize)
 {
-    if(promptPointLabels_.empty() || promptPointCoords_.empty()){
+    if(m_promptPointLabels.empty() || m_promptPointCoords.empty()){
         std::cerr << "[WARN] InferSingleFrame => no prompts.\n";
         return cv::Mat();
     }
     // Build 5 inputs => decode => upsample => final
-    int numPoints = (int)promptPointLabels_.size();
+    int numPoints = (int)m_promptPointLabels.size();
     std::vector<int64_t> shpPoints = {1, numPoints, 2};
     std::vector<int64_t> shpLabels = {1, numPoints};
 
@@ -495,30 +447,19 @@ cv::Mat SAM2::InferSingleFrame(const cv::Size &originalSize)
     decInputs.reserve(5);
 
     // 0) point_coords
-    decInputs.push_back(
-        createTensor<float>(memoryInfo, promptPointCoords_, shpPoints)
-    );
+    decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointCoords, shpPoints));
     // 1) point_labels
-    decInputs.push_back(
-        createTensor<float>(memoryInfo, promptPointLabels_, shpLabels)
-    );
+    decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointLabels, shpLabels));
     // 2) image_embed
-    decInputs.push_back(
-        createTensor<float>(memoryInfo, outputTensorValuesEncoder, outputShapeEncoder)
-    );
+    decInputs.push_back(createTensor<float>(m_memoryInfo, m_outputTensorValuesEncoder, m_outputShapeEncoder));
     // 3) feats_0
-    decInputs.push_back(
-        createTensor<float>(memoryInfo, highResFeatures1, highResFeatures1Shape)
-    );
+    decInputs.push_back(createTensor<float>(m_memoryInfo, m_highResFeatures1, m_highResFeatures1Shape));
     // 4) feats_1
-    decInputs.push_back(
-        createTensor<float>(memoryInfo, highResFeatures2, highResFeatures2Shape)
-    );
+    decInputs.push_back(createTensor<float>(m_memoryInfo, m_highResFeatures2, m_highResFeatures2Shape));
 
     auto decRes = runImageDecoder(decInputs);
     if(decRes.index() == 1){
-        std::cerr << "[ERROR] InferSingleFrame => decode => "
-                  << std::get<std::string>(decRes) << "\n";
+        std::cerr << "[ERROR] InferSingleFrame => decode => " << std::get<std::string>(decRes) << "\n";
         return cv::Mat();
     }
     auto &decOuts = std::get<0>(decRes);
@@ -556,8 +497,8 @@ cv::Mat SAM2::InferSingleFrame(const cv::Size &originalSize)
 // --------------------
 void SAM2::setPrompts(const Prompts &prompts, const cv::Size &originalImageSize)
 {
-    promptPointCoords_.clear();
-    promptPointLabels_.clear();
+    m_promptPointCoords.clear();
+    m_promptPointLabels.clear();
 
     cv::Size encSize = getInputSize();
     if(encSize.width <= 0 || encSize.height <= 0){
@@ -569,24 +510,24 @@ void SAM2::setPrompts(const Prompts &prompts, const cv::Size &originalImageSize)
     for(const auto &rc : prompts.rects){
         float x1 = rc.x * (float)encSize.width / (float)originalImageSize.width;
         float y1 = rc.y * (float)encSize.height / (float)originalImageSize.height;
-        promptPointCoords_.push_back(x1);
-        promptPointCoords_.push_back(y1);
-        promptPointLabels_.push_back(2.f);
+        m_promptPointCoords.push_back(x1);
+        m_promptPointCoords.push_back(y1);
+        m_promptPointLabels.push_back(2.f);
 
         float x2 = rc.br().x * (float)encSize.width / (float)originalImageSize.width;
         float y2 = rc.br().y * (float)encSize.height / (float)originalImageSize.height;
-        promptPointCoords_.push_back(x2);
-        promptPointCoords_.push_back(y2);
-        promptPointLabels_.push_back(3.f);
+        m_promptPointCoords.push_back(x2);
+        m_promptPointCoords.push_back(y2);
+        m_promptPointLabels.push_back(3.f);
     }
 
     // Points => label=1,0,etc.
     for(size_t i=0; i<prompts.points.size(); i++){
         float x = prompts.points[i].x * (float)encSize.width / (float)originalImageSize.width;
         float y = prompts.points[i].y * (float)encSize.height/ (float)originalImageSize.height;
-        promptPointCoords_.push_back(x);
-        promptPointCoords_.push_back(y);
-        promptPointLabels_.push_back((float)prompts.pointLabels[i]);
+        m_promptPointCoords.push_back(x);
+        m_promptPointCoords.push_back(y);
+        m_promptPointLabels.push_back((float)prompts.pointLabels[i]);
     }
 }
 
@@ -594,7 +535,7 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
                               const cv::Size &originalSize,
                               const Prompts &prompts)
 {
-    if (!mem_attention_session || !mem_encoder_session) {
+    if (!m_memAttentionSession || !m_memEncoderSession) {
         std::cerr << "[ERROR] mem sessions not loaded => did you call initializeVideo()?\n";
         return cv::Mat();
     }
@@ -605,7 +546,7 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
     // -----------
     // If no memory => "Frame 0" approach
     // -----------
-    if (!hasMemory_) {
+    if (!m_hasMemory) {
         std::cout << "[INFO] InferMultiFrame => no memory => frame0.\n";
         // Similar to single-frame, but the encoder returns 5 outputs.
         auto t0 = std::chrono::steady_clock::now();
@@ -618,10 +559,8 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
         }
         std::vector<float> encData = normalizeBGR(resizedFrame);
 
-        std::vector<int64_t> shapeEnc = {
-            1, 3, (int64_t)expected.height, (int64_t)expected.width
-        };
-        Ort::Value encIn = createTensor<float>(memoryInfo, encData, shapeEnc);
+        std::vector<int64_t> shapeEnc = { 1, 3, (int64_t)expected.height, (int64_t)expected.width };
+        Ort::Value encIn = createTensor<float>(m_memoryInfo, encData, shapeEnc);
 
         std::vector<Ort::Value> encInputs;
         encInputs.reserve(1);
@@ -630,8 +569,7 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
         // 2) runImageEncoder => 5 outputs
         auto encRes = runImageEncoder(encInputs);
         if(encRes.index() == 1) {
-            std::cerr << "[ERROR] frame0 => runImageEncoder => "
-                      << std::get<std::string>(encRes) << "\n";
+            std::cerr << "[ERROR] frame0 => runImageEncoder => " << std::get<std::string>(encRes) << "\n";
             return cv::Mat();
         }
         auto &encOuts = std::get<0>(encRes);
@@ -665,32 +603,21 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
         auto tDec0 = std::chrono::steady_clock::now();
         setPrompts(prompts, originalSize);
 
-        int nPts = (int)promptPointLabels_.size();
+        int nPts = (int)m_promptPointLabels.size();
         std::vector<int64_t> shpPts = {1, nPts, 2};
         std::vector<int64_t> shpLbl = {1, nPts};
 
         std::vector<Ort::Value> decInputs;
         decInputs.reserve(5);
-        decInputs.push_back(
-            createTensor<float>(memoryInfo, promptPointCoords_, shpPts)
-        );
-        decInputs.push_back(
-            createTensor<float>(memoryInfo, promptPointLabels_, shpLbl)
-        );
-        decInputs.push_back(
-            createTensor<float>(memoryInfo, embedData, embedShape)
-        );
-        decInputs.push_back(
-            createTensor<float>(memoryInfo, feats0Data, feats0Shape)
-        );
-        decInputs.push_back(
-            createTensor<float>(memoryInfo, feats1Data, feats1Shape)
-        );
+        decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointCoords, shpPts));
+        decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointLabels, shpLbl));
+        decInputs.push_back(createTensor<float>(m_memoryInfo, embedData, embedShape));
+        decInputs.push_back(createTensor<float>(m_memoryInfo, feats0Data, feats0Shape));
+        decInputs.push_back(createTensor<float>(m_memoryInfo, feats1Data, feats1Shape));
 
         auto decRes = runImageDecoder(decInputs);
         if(decRes.index() == 1) {
-            std::cerr << "[ERROR] decode => "
-                      << std::get<std::string>(decRes) << "\n";
+            std::cerr << "[ERROR] decode => " << std::get<std::string>(decRes) << "\n";
             return cv::Mat();
         }
         auto &decOuts = std::get<0>(decRes);
@@ -734,7 +661,7 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
         memEncInputs.reserve(2);
         memEncInputs.push_back(std::move(decOuts[1])); // mask_for_mem
         memEncInputs.push_back(
-            createTensor<float>(memoryInfo, embedData, embedShape)
+            createTensor<float>(m_memoryInfo, embedData, embedShape)
         );
 
         auto memEncRes = runMemEncoder(memEncInputs);
@@ -756,25 +683,25 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
             float* p = memEncOuts[0].GetTensorMutableData<float>();
             auto shape = memEncOuts[0].GetTensorTypeAndShapeInfo().GetShape();
             size_t ct=1; for(auto d: shape) ct*= (size_t)d;
-            maskMemFeatures_.assign(p, p+ct);
-            maskMemFeaturesShape_.assign(shape.begin(), shape.end());
+            m_maskMemFeatures.assign(p, p+ct);
+            m_maskMemFeaturesShape.assign(shape.begin(), shape.end());
         }
         {
             float* p = memEncOuts[1].GetTensorMutableData<float>();
             auto shape = memEncOuts[1].GetTensorTypeAndShapeInfo().GetShape();
             size_t ct=1; for(auto d: shape) ct*= (size_t)d;
-            maskMemPosEnc_.assign(p, p+ct);
-            maskMemPosEncShape_.assign(shape.begin(), shape.end());
+            m_maskMemPosEnc.assign(p, p+ct);
+            m_maskMemPosEncShape.assign(shape.begin(), shape.end());
         }
         {
             float* p = memEncOuts[2].GetTensorMutableData<float>();
             auto shape = memEncOuts[2].GetTensorTypeAndShapeInfo().GetShape();
             size_t ct=1; for(auto d: shape) ct*= (size_t)d;
-            temporalCode_.assign(p, p+ct);
-            temporalCodeShape_.assign(shape.begin(), shape.end());
+            m_temporalCode.assign(p, p+ct);
+            m_temporalCodeShape.assign(shape.begin(), shape.end());
         }
 
-        hasMemory_ = true;
+        m_hasMemory = true;
 
         std::cout << "[INFO] Frame0 times => "
                   << "Enc: " << encTimeMs << " ms, "
@@ -797,12 +724,9 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
         }
         std::vector<float> encData = normalizeBGR(resizedFrame);
 
-        std::vector<int64_t> shapeEnc = {
-            1, 3,
-            (int64_t)expected.height, (int64_t)expected.width
-        };
+        std::vector<int64_t> shapeEnc = { 1, 3, (int64_t)expected.height, (int64_t)expected.width };
 
-        Ort::Value encIn = createTensor<float>(memoryInfo, encData, shapeEnc);
+        Ort::Value encIn = createTensor<float>(m_memoryInfo, encData, shapeEnc);
 
         std::vector<Ort::Value> encInputs;
         encInputs.reserve(1);
@@ -841,27 +765,20 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
         // vision_pos_embed
         memAttnInputs.push_back(std::move(encOuts[4]));
 
-        // memory_0 => empty object tokens
+        // memory0 => empty object tokens
         {
             std::vector<float> mem0;
             std::vector<int64_t> mem0Shape = {0,256};
-            memAttnInputs.push_back(
-                createTensor<float>(memoryInfo, mem0, mem0Shape)
-            );
+            memAttnInputs.push_back(createTensor<float>(m_memoryInfo, mem0, mem0Shape));
         }
-        // memory_1 => maskMemFeatures_
-        memAttnInputs.push_back(
-            createTensor<float>(memoryInfo, maskMemFeatures_, maskMemFeaturesShape_)
-        );
-        // memory_pos_embed => maskMemPosEnc_
-        memAttnInputs.push_back(
-            createTensor<float>(memoryInfo, maskMemPosEnc_, maskMemPosEncShape_)
-        );
+        // memory1 => m_maskMemFeatures
+        memAttnInputs.push_back(createTensor<float>(m_memoryInfo, m_maskMemFeatures, m_maskMemFeaturesShape));
+        // memoryPosEmbed => m_maskMemPosEnc
+        memAttnInputs.push_back(createTensor<float>(m_memoryInfo, m_maskMemPosEnc, m_maskMemPosEncShape));
 
         auto attnRes = runMemAttention(memAttnInputs);
         if(attnRes.index() == 1){
-            std::cerr << "[ERROR] memAttn => "
-                      << std::get<std::string>(attnRes) << "\n";
+            std::cerr << "[ERROR] memAttn => " << std::get<std::string>(attnRes) << "\n";
             return cv::Mat();
         }
         auto &attnOuts = std::get<0>(attnRes);
@@ -883,30 +800,23 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
         auto tDec0 = std::chrono::steady_clock::now();
         setPrompts(prompts, originalSize);
 
-        int nPts = (int)promptPointLabels_.size();
+        int nPts = (int)m_promptPointLabels.size();
         std::vector<int64_t> shpPts = {1, nPts, 2};
         std::vector<int64_t> shpLbl = {1, nPts};
 
         std::vector<Ort::Value> decInputs;
         decInputs.reserve(5);
 
-        decInputs.push_back(
-            createTensor<float>(memoryInfo, promptPointCoords_, shpPts)
-        );
-        decInputs.push_back(
-            createTensor<float>(memoryInfo, promptPointLabels_, shpLbl)
-        );
-        decInputs.push_back(
-            createTensor<float>(memoryInfo, fusedVec, fusedShape)
-        );
-        // feats_0 => encOuts[1], feats_1 => encOuts[2]
+        decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointCoords, shpPts));
+        decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointLabels, shpLbl));
+        decInputs.push_back(createTensor<float>(m_memoryInfo, fusedVec, fusedShape));
+        // feats0 => encOuts[1], feats1 => encOuts[2]
         decInputs.push_back(std::move(encOuts[1]));
         decInputs.push_back(std::move(encOuts[2]));
 
         auto decRes = runImageDecoder(decInputs);
         if(decRes.index() == 1){
-            std::cerr << "[ERROR] decode => "
-                      << std::get<std::string>(decRes) << "\n";
+            std::cerr << "[ERROR] decode => " << std::get<std::string>(decRes) << "\n";
             return cv::Mat();
         }
         auto &decOuts = std::get<0>(decRes);
@@ -945,7 +855,7 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
         memEncInputs.reserve(2);
         memEncInputs.push_back(std::move(decOuts[1]));
         memEncInputs.push_back(
-            createTensor<float>(memoryInfo, embedData, embedShape)
+            createTensor<float>(m_memoryInfo, embedData, embedShape)
         );
 
         auto memEncRes = runMemEncoder(memEncInputs);
@@ -967,22 +877,22 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
             float* p = memEncOuts[0].GetTensorMutableData<float>();
             auto shape = memEncOuts[0].GetTensorTypeAndShapeInfo().GetShape();
             size_t ct=1; for(auto d: shape) ct*= (size_t)d;
-            maskMemFeatures_.assign(p, p+ct);
-            maskMemFeaturesShape_.assign(shape.begin(), shape.end());
+            m_maskMemFeatures.assign(p, p+ct);
+            m_maskMemFeaturesShape.assign(shape.begin(), shape.end());
         }
         {
             float* p = memEncOuts[1].GetTensorMutableData<float>();
             auto shape = memEncOuts[1].GetTensorTypeAndShapeInfo().GetShape();
             size_t ct=1; for(auto d: shape) ct*= (size_t)d;
-            maskMemPosEnc_.assign(p, p+ct);
-            maskMemPosEncShape_.assign(shape.begin(), shape.end());
+            m_maskMemPosEnc.assign(p, p+ct);
+            m_maskMemPosEncShape.assign(shape.begin(), shape.end());
         }
         {
             float* p = memEncOuts[2].GetTensorMutableData<float>();
             auto shape = memEncOuts[2].GetTensorTypeAndShapeInfo().GetShape();
             size_t ct=1; for(auto d: shape) ct*= (size_t)d;
-            temporalCode_.assign(p, p+ct);
-            temporalCodeShape_.assign(shape.begin(), shape.end());
+            m_temporalCode.assign(p, p+ct);
+            m_temporalCodeShape.assign(shape.begin(), shape.end());
         }
 
         std::cout << "[INFO] FrameN times => "
@@ -1043,9 +953,9 @@ SAM2::runSession(Ort::Session* session,
 std::variant<std::vector<Ort::Value>, std::string>
 SAM2::runImageEncoder(const std::vector<Ort::Value> &inputTensors)
 {
-    return runSession(img_encoder_session.get(),
-                      img_encoder_input_nodes,
-                      img_encoder_output_nodes,
+    return runSession(m_imgEncoderSession.get(),
+                      m_imgEncoderInputNodes,
+                      m_imgEncoderOutputNodes,
                       inputTensors,
                       "img_encoder_session");
 }
@@ -1053,9 +963,9 @@ SAM2::runImageEncoder(const std::vector<Ort::Value> &inputTensors)
 std::variant<std::vector<Ort::Value>, std::string>
 SAM2::runImageDecoder(const std::vector<Ort::Value> &inputTensors)
 {
-    return runSession(img_decoder_session.get(),
-                      img_decoder_input_nodes,
-                      img_decoder_output_nodes,
+    return runSession(m_imgDecoderSession.get(),
+                      m_imgDecoderInputNodes,
+                      m_imgDecoderOutputNodes,
                       inputTensors,
                       "img_decoder_session");
 }
@@ -1063,9 +973,9 @@ SAM2::runImageDecoder(const std::vector<Ort::Value> &inputTensors)
 std::variant<std::vector<Ort::Value>, std::string>
 SAM2::runMemAttention(const std::vector<Ort::Value> &inputTensors)
 {
-    return runSession(mem_attention_session.get(),
-                      mem_attention_input_nodes,
-                      mem_attention_output_nodes,
+    return runSession(m_memAttentionSession.get(),
+                      m_memAttentionInputNodes,
+                      m_memAttentionOutputNodes,
                       inputTensors,
                       "mem_attention_session");
 }
@@ -1073,9 +983,9 @@ SAM2::runMemAttention(const std::vector<Ort::Value> &inputTensors)
 std::variant<std::vector<Ort::Value>, std::string>
 SAM2::runMemEncoder(const std::vector<Ort::Value> &inputTensors)
 {
-    return runSession(mem_encoder_session.get(),
-                      mem_encoder_input_nodes,
-                      mem_encoder_output_nodes,
+    return runSession(m_memEncoderSession.get(),
+                      m_memEncoderInputNodes,
+                      m_memEncoderOutputNodes,
                       inputTensors,
                       "mem_encoder_session");
 }
