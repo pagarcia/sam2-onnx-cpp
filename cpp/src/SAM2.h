@@ -85,8 +85,7 @@ public:
 
     // For multi-frame usage:
     void setPrompts(const Prompts &prompts, const Size &originalImageSize);
-    cv::Mat InferMultiFrame(const cv::Mat &resizedFrame,
-                            const Size &originalSize,
+    cv::Mat InferMultiFrame(const cv::Mat &originalImage,
                             const Prompts &prompts);
 
     // Basic info

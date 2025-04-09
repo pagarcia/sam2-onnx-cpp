@@ -380,9 +380,6 @@ int runOnnxTestVideo(int argc, char** argv)
         auto t0=std::chrono::steady_clock::now();
 
         // We must resize EVERY frame to inputSize => no mismatch
-        cv::Mat resizedFrame;
-        cv::resize(frameBGR, resizedFrame, cv::Size(st.inputSize.width, st.inputSize.height));
-
         // On frame0 => seeds, else empty
         Prompts promptsToUse;
         if(frameIndex==0){
@@ -390,7 +387,7 @@ int runOnnxTestVideo(int argc, char** argv)
             std::cout<<"[INFO] Frame0 => user seeds.\n";
         }
 
-        cv::Mat mask= st.sam->InferMultiFrame(resizedFrame, Size(frameBGR.size().width, frameBGR.size().height), promptsToUse);
+        cv::Mat mask= st.sam->InferMultiFrame(frameBGR, promptsToUse);
         auto t1= std::chrono::steady_clock::now();
         double ms= std::chrono::duration<double,std::milli>(t1-t0).count();
         std::cout<<"[INFO] Frame "<<frameIndex<<" => "<< ms <<" ms\n";

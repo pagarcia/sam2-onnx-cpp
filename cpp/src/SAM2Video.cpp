@@ -45,8 +45,7 @@ void SAM2::setPrompts(const Prompts &prompts, const Size &originalImageSize)
     }
 }
 
-cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
-                              const Size &originalSize,
+cv::Mat SAM2::InferMultiFrame(const cv::Mat &originalImage,
                               const Prompts &prompts)
 {
     if (!m_memAttentionSession || !m_memEncoderSession) {
@@ -57,6 +56,12 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
     // We'll track times for logging
     double encTimeMs = 0.0, attnTimeMs = 0.0, decTimeMs = 0.0, memEncTimeMs = 0.0;
 
+    Size originalImageSize(originalImage.size().width, originalImage.size().height);
+    Size SAM2ImageSize = getInputSize();
+    cv::Mat SAM2Image;
+    cv::resize(originalImage, SAM2Image, cv::Size(SAM2ImageSize.width, SAM2ImageSize.height));
+    std::vector<float> encData = normalizeBGR(SAM2Image);
+
     // -----------
     // If no memory => "Frame 0" approach
     // -----------
@@ -65,15 +70,7 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
         // Similar to single-frame, but the encoder returns 5 outputs.
         auto t0 = std::chrono::steady_clock::now();
 
-        // 1) normalize
-        Size expected = getInputSize();
-        if(resizedFrame.size().width != expected.width || resizedFrame.size().height != expected.height || resizedFrame.channels() != 3) {
-            std::cerr << "[ERROR] frame0 => mismatch input.\n";
-            return cv::Mat();
-        }
-        std::vector<float> encData = normalizeBGR(resizedFrame);
-
-        std::vector<int64_t> shapeEnc = { 1, 3, (int64_t)expected.height, (int64_t)expected.width };
+        std::vector<int64_t> shapeEnc = { 1, 3, (int64_t)SAM2ImageSize.height, (int64_t)SAM2ImageSize.width };
         Ort::Value encIn = createTensor<float>(m_memoryInfo, encData, shapeEnc);
 
         std::vector<Ort::Value> encInputs;
@@ -115,7 +112,7 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
 
         // decode
         auto tDec0 = std::chrono::steady_clock::now();
-        setPrompts(prompts, originalSize);
+        setPrompts(prompts, originalImageSize);
 
         int nPts = (int)m_promptPointLabels.size();
         std::vector<int64_t> shpPts = {1, nPts, 2};
@@ -157,9 +154,9 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
             int mw = (int)pmShape[3];
             cv::Mat lowRes(mh, mw, CV_32FC1, (void*)pm);
             cv::Mat upFloat;
-            cv::resize(lowRes, upFloat, cv::Size(originalSize.width, originalSize.height), 0, 0, cv::INTER_LINEAR);
+            cv::resize(lowRes, upFloat, cv::Size(originalImageSize.width, originalImageSize.height), 0, 0, cv::INTER_LINEAR);
 
-            finalMask.create(cv::Size(originalSize.width, originalSize.height), CV_8UC1);
+            finalMask.create(cv::Size(originalImageSize.width, originalImageSize.height), CV_8UC1);
             for(int r=0; r<finalMask.rows; r++){
                 const float* rowF = upFloat.ptr<float>(r);
                 uchar* rowB      = finalMask.ptr<uchar>(r);
@@ -230,15 +227,8 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
         // -----------
         std::cout << "[INFO] InferMultiFrame => we have memory => frameN.\n";
         auto tEnc0 = std::chrono::steady_clock::now();
-
-        Size expected = getInputSize();
-        if(resizedFrame.size().width != expected.width || resizedFrame.size().height != expected.height || resizedFrame.channels() != 3) {
-            std::cerr << "[ERROR] frameN => mismatch input.\n";
-            return cv::Mat();
-        }
-        std::vector<float> encData = normalizeBGR(resizedFrame);
-
-        std::vector<int64_t> shapeEnc = { 1, 3, (int64_t)expected.height, (int64_t)expected.width };
+        
+        std::vector<int64_t> shapeEnc = { 1, 3, (int64_t)SAM2ImageSize.height, (int64_t)SAM2ImageSize.width };
 
         Ort::Value encIn = createTensor<float>(m_memoryInfo, encData, shapeEnc);
 
@@ -312,7 +302,7 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
 
         // 3) decode => set prompts => final mask
         auto tDec0 = std::chrono::steady_clock::now();
-        setPrompts(prompts, originalSize);
+        setPrompts(prompts, originalImageSize);
 
         int nPts = (int)m_promptPointLabels.size();
         std::vector<int64_t> shpPts = {1, nPts, 2};
@@ -351,9 +341,9 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
             int mw = (int)pmShape[3];
             cv::Mat lowRes(mh, mw, CV_32FC1, (void*)pm);
             cv::Mat upFloat;
-            cv::resize(lowRes, upFloat, cv::Size(originalSize.width, originalSize.height), 0, 0, cv::INTER_LINEAR);
+            cv::resize(lowRes, upFloat, cv::Size(originalImageSize.width, originalImageSize.height), 0, 0, cv::INTER_LINEAR);
 
-            finalMask.create(cv::Size(originalSize.width, originalSize.height), CV_8UC1);
+            finalMask.create(cv::Size(originalImageSize.width, originalImageSize.height), CV_8UC1);
             for(int r=0; r<finalMask.rows; r++){
                 const float* rowF = upFloat.ptr<float>(r);
                 uchar* rowB      = finalMask.ptr<uchar>(r);
