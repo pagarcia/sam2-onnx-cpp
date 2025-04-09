@@ -113,69 +113,69 @@ private:
 
 private:
     // 1) Single-frame sessions
-    std::unique_ptr<Ort::Session> img_encoder_session;
-    std::unique_ptr<Ort::Session> img_decoder_session;
+    std::unique_ptr<Ort::Session> m_imgEncoderSession;
+    std::unique_ptr<Ort::Session> m_imgDecoderSession;
 
     // 2) Multi-frame sessions
-    std::unique_ptr<Ort::Session> mem_attention_session;
-    std::unique_ptr<Ort::Session> mem_encoder_session;
+    std::unique_ptr<Ort::Session> m_memAttentionSession;
+    std::unique_ptr<Ort::Session> m_memEncoderSession;
 
     // Node info
-    std::vector<Node> img_encoder_input_nodes;
-    std::vector<Node> img_encoder_output_nodes;
-    std::vector<Node> img_decoder_input_nodes;
-    std::vector<Node> img_decoder_output_nodes;
+    std::vector<Node> m_imgEncoderInputNodes;
+    std::vector<Node> m_imgEncoderOutputNodes;
+    std::vector<Node> m_imgDecoderInputNodes;
+    std::vector<Node> m_imgDecoderOutputNodes;
 
     // Node info for memory
-    std::vector<Node> mem_attention_input_nodes;
-    std::vector<Node> mem_attention_output_nodes;
-    std::vector<Node> mem_encoder_input_nodes;
-    std::vector<Node> mem_encoder_output_nodes;
+    std::vector<Node> m_memAttentionInputNodes;
+    std::vector<Node> m_memAttentionOutputNodes;
+    std::vector<Node> m_memEncoderInputNodes;
+    std::vector<Node> m_memEncoderOutputNodes;
 
     // Shapes
-    std::vector<int64_t> inputShapeEncoder;     // typically [1,3,1024,1024]
-    std::vector<int64_t> outputShapeEncoder;    // e.g. [1,256,64,64]
-    std::vector<int64_t> highResFeatures1Shape; // e.g. [1,32,256,256]
-    std::vector<int64_t> highResFeatures2Shape; // e.g. [1,64,128,128]
+    std::vector<int64_t> m_inputShapeEncoder;     // typically [1,3,1024,1024]
+    std::vector<int64_t> m_outputShapeEncoder;    // e.g. [1,256,64,64]
+    std::vector<int64_t> m_highResFeatures1Shape; // e.g. [1,32,256,256]
+    std::vector<int64_t> m_highResFeatures2Shape; // e.g. [1,64,128,128]
 
     // Encoder outputs for single-frame usage
-    std::vector<float> outputTensorValuesEncoder;  // [1,256,64,64]
-    std::vector<float> highResFeatures1;           // [1,32,256,256]
-    std::vector<float> highResFeatures2;           // [1,64,128,128]
+    std::vector<float> m_outputTensorValuesEncoder;  // [1,256,64,64]
+    std::vector<float> m_highResFeatures1;           // [1,32,256,256]
+    std::vector<float> m_highResFeatures2;           // [1,64,128,128]
 
     // Stored prompt data (for single-frame decode)
-    std::vector<float> promptPointCoords_;
-    std::vector<float> promptPointLabels_;
+    std::vector<float> m_promptPointCoords;
+    std::vector<float> m_promptPointLabels;
 
     // Multi-frame memory
-    bool hasMemory_ = false;
-    std::vector<float> maskMemFeatures_;     // e.g. [1,64,64,64]
-    std::vector<int64_t> maskMemFeaturesShape_;
-    std::vector<float> maskMemPosEnc_;
-    std::vector<int64_t> maskMemPosEncShape_;
-    std::vector<float> temporalCode_;
-    std::vector<int64_t> temporalCodeShape_;
+    bool m_hasMemory = false;
+    std::vector<float> m_maskMemFeatures;     // e.g. [1,64,64,64]
+    std::vector<int64_t> m_maskMemFeaturesShape;
+    std::vector<float> m_maskMemPosEnc;
+    std::vector<int64_t> m_maskMemPosEncShape;
+    std::vector<float> m_temporalCode;
+    std::vector<int64_t> m_temporalCodeShape;
 
     // ORT environment & options
-    Ort::Env encoderEnv{ORT_LOGGING_LEVEL_WARNING, "img_encoder"};
-    Ort::Env decoderEnv{ORT_LOGGING_LEVEL_WARNING, "img_decoder"};
-    Ort::Env memAttentionEnv{ORT_LOGGING_LEVEL_WARNING, "mem_attention"};
-    Ort::Env memEncoderEnv{ORT_LOGGING_LEVEL_WARNING, "mem_encoder"};
+    Ort::Env m_encoderEnv{ORT_LOGGING_LEVEL_WARNING, "img_encoder"};
+    Ort::Env m_decoderEnv{ORT_LOGGING_LEVEL_WARNING, "img_decoder"};
+    Ort::Env m_memAttentionEnv{ORT_LOGGING_LEVEL_WARNING, "mem_attention"};
+    Ort::Env m_memEncoderEnv{ORT_LOGGING_LEVEL_WARNING, "mem_encoder"};
 
-    Ort::SessionOptions encoderOptions;
-    Ort::SessionOptions decoderOptions;
-    Ort::SessionOptions memAttentionOptions;
-    Ort::SessionOptions memEncoderOptions;
+    Ort::SessionOptions m_encoderOptions;
+    Ort::SessionOptions m_decoderOptions;
+    Ort::SessionOptions m_memAttentionOptions;
+    Ort::SessionOptions m_memEncoderOptions;
 
-    Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    Ort::MemoryInfo m_memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
     // Normalization constants
-    static constexpr float MEAN_R = 0.485f;
-    static constexpr float MEAN_G = 0.456f;
-    static constexpr float MEAN_B = 0.406f;
-    static constexpr float STD_R  = 0.229f;
-    static constexpr float STD_G  = 0.224f;
-    static constexpr float STD_B  = 0.225f;
+    static constexpr float m_MEAN_R = 0.485f;
+    static constexpr float m_MEAN_G = 0.456f;
+    static constexpr float m_MEAN_B = 0.406f;
+    static constexpr float m_STD_R  = 0.229f;
+    static constexpr float m_STD_G  = 0.224f;
+    static constexpr float m_STD_B  = 0.225f;
 };
 
 #endif // SAMCPP__SAM_H_
