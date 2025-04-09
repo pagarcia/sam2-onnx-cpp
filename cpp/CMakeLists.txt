@@ -63,7 +63,8 @@ add_executable(${TARGET_NAME}
     src/onnx_test_image.cpp
     src/onnx_test_video.cpp
     src/SAM2Session.cpp
-    src/SAM2.cpp
+    src/SAM2Image.cpp
+    src/SAM2Video.cpp
     ${OPENFILEDIALOG_SRC}
 )
 

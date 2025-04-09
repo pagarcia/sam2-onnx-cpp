@@ -1,0 +1,420 @@
+#include "SAM2.h"
+#include <fstream>
+#include <stdexcept>
+#include <iostream>
+#include <sstream>
+#include <opencv2/opencv.hpp>
+#include <cstring> // for memcpy
+
+// --------------------
+// Multi-frame usage
+// --------------------
+void SAM2::setPrompts(const Prompts &prompts, const cv::Size &originalImageSize)
+{
+    m_promptPointCoords.clear();
+    m_promptPointLabels.clear();
+
+    cv::Size encSize = getInputSize();
+    if(encSize.width <= 0 || encSize.height <= 0){
+        std::cerr << "[WARN] setPrompts => invalid encoder size.\n";
+        return;
+    }
+
+    // Rect => label=2,3
+    for(const auto &rc : prompts.rects){
+        float x1 = rc.x * (float)encSize.width / (float)originalImageSize.width;
+        float y1 = rc.y * (float)encSize.height / (float)originalImageSize.height;
+        m_promptPointCoords.push_back(x1);
+        m_promptPointCoords.push_back(y1);
+        m_promptPointLabels.push_back(2.f);
+
+        float x2 = rc.br().x * (float)encSize.width / (float)originalImageSize.width;
+        float y2 = rc.br().y * (float)encSize.height / (float)originalImageSize.height;
+        m_promptPointCoords.push_back(x2);
+        m_promptPointCoords.push_back(y2);
+        m_promptPointLabels.push_back(3.f);
+    }
+
+    // Points => label=1,0,etc.
+    for(size_t i=0; i<prompts.points.size(); i++){
+        float x = prompts.points[i].x * (float)encSize.width / (float)originalImageSize.width;
+        float y = prompts.points[i].y * (float)encSize.height/ (float)originalImageSize.height;
+        m_promptPointCoords.push_back(x);
+        m_promptPointCoords.push_back(y);
+        m_promptPointLabels.push_back((float)prompts.pointLabels[i]);
+    }
+}
+
+cv::Mat SAM2::InferMultiFrame(const cv::Mat &resizedFrame,
+                              const cv::Size &originalSize,
+                              const Prompts &prompts)
+{
+    if (!m_memAttentionSession || !m_memEncoderSession) {
+        std::cerr << "[ERROR] mem sessions not loaded => did you call initializeVideo()?\n";
+        return cv::Mat();
+    }
+
+    // We'll track times for logging
+    double encTimeMs = 0.0, attnTimeMs = 0.0, decTimeMs = 0.0, memEncTimeMs = 0.0;
+
+    // -----------
+    // If no memory => "Frame 0" approach
+    // -----------
+    if (!m_hasMemory) {
+        std::cout << "[INFO] InferMultiFrame => no memory => frame0.\n";
+        // Similar to single-frame, but the encoder returns 5 outputs.
+        auto t0 = std::chrono::steady_clock::now();
+
+        // 1) normalize
+        cv::Size expected = getInputSize();
+        if(resizedFrame.size() != expected || resizedFrame.channels() != 3) {
+            std::cerr << "[ERROR] frame0 => mismatch input.\n";
+            return cv::Mat();
+        }
+        std::vector<float> encData = normalizeBGR(resizedFrame);
+
+        std::vector<int64_t> shapeEnc = { 1, 3, (int64_t)expected.height, (int64_t)expected.width };
+        Ort::Value encIn = createTensor<float>(m_memoryInfo, encData, shapeEnc);
+
+        std::vector<Ort::Value> encInputs;
+        encInputs.reserve(1);
+        encInputs.push_back(std::move(encIn));
+
+        // 2) runImageEncoder => 5 outputs
+        auto encRes = runImageEncoder(encInputs);
+        if(encRes.index() == 1) {
+            std::cerr << "[ERROR] frame0 => runImageEncoder => " << std::get<std::string>(encRes) << "\n";
+            return cv::Mat();
+        }
+        auto &encOuts = std::get<0>(encRes);
+        if(encOuts.size() < 5) {
+            std::cerr << "[ERROR] encoder returned <5 for frame0.\n";
+            return cv::Mat();
+        }
+        auto t1 = std::chrono::steady_clock::now();
+        encTimeMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+        // Grab the first 3 for decoding: [0] = image_embed, [1] = feats0, [2] = feats1
+        float* embedPtr  = encOuts[0].GetTensorMutableData<float>();
+        auto embedShape  = encOuts[0].GetTensorTypeAndShapeInfo().GetShape();
+
+        float* feats0Ptr = encOuts[1].GetTensorMutableData<float>();
+        auto feats0Shape = encOuts[1].GetTensorTypeAndShapeInfo().GetShape();
+
+        float* feats1Ptr = encOuts[2].GetTensorMutableData<float>();
+        auto feats1Shape = encOuts[2].GetTensorTypeAndShapeInfo().GetShape();
+
+        // clone them for decode usage
+        size_t embedCount = 1; for(auto d: embedShape)  embedCount  *= (size_t)d;
+        size_t feats0Count=1; for(auto d: feats0Shape) feats0Count *= (size_t)d;
+        size_t feats1Count=1; for(auto d: feats1Shape) feats1Count *= (size_t)d;
+
+        std::vector<float> embedData(embedPtr,  embedPtr  + embedCount);
+        std::vector<float> feats0Data(feats0Ptr, feats0Ptr+ feats0Count);
+        std::vector<float> feats1Data(feats1Ptr, feats1Ptr+ feats1Count);
+
+        // decode
+        auto tDec0 = std::chrono::steady_clock::now();
+        setPrompts(prompts, originalSize);
+
+        int nPts = (int)m_promptPointLabels.size();
+        std::vector<int64_t> shpPts = {1, nPts, 2};
+        std::vector<int64_t> shpLbl = {1, nPts};
+
+        std::vector<Ort::Value> decInputs;
+        decInputs.reserve(5);
+        decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointCoords, shpPts));
+        decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointLabels, shpLbl));
+        decInputs.push_back(createTensor<float>(m_memoryInfo, embedData, embedShape));
+        decInputs.push_back(createTensor<float>(m_memoryInfo, feats0Data, feats0Shape));
+        decInputs.push_back(createTensor<float>(m_memoryInfo, feats1Data, feats1Shape));
+
+        auto decRes = runImageDecoder(decInputs);
+        if(decRes.index() == 1) {
+            std::cerr << "[ERROR] decode => " << std::get<std::string>(decRes) << "\n";
+            return cv::Mat();
+        }
+        auto &decOuts = std::get<0>(decRes);
+        if(decOuts.size() < 3) {
+            std::cerr << "[ERROR] decode returned <3.\n";
+            return cv::Mat();
+        }
+        auto tDec1 = std::chrono::steady_clock::now();
+        decTimeMs = std::chrono::duration<double, std::milli>(tDec1 - tDec0).count();
+
+        // decOuts[1] = mask_for_mem => [1,1,1024,1024]
+        // decOuts[2] = pred_mask    => [1,N,256,256]
+        // build final mask
+        cv::Mat finalMask;
+        {
+            float* pm = decOuts[2].GetTensorMutableData<float>();
+            auto pmShape = decOuts[2].GetTensorTypeAndShapeInfo().GetShape();
+            if(pmShape.size() < 4){
+                std::cerr << "[ERROR] pred_mask shape?\n";
+                return cv::Mat();
+            }
+            int mh = (int)pmShape[2];
+            int mw = (int)pmShape[3];
+            cv::Mat lowRes(mh, mw, CV_32FC1, (void*)pm);
+            cv::Mat upFloat;
+            cv::resize(lowRes, upFloat, originalSize, 0, 0, cv::INTER_LINEAR);
+
+            finalMask.create(originalSize, CV_8UC1);
+            for(int r=0; r<finalMask.rows; r++){
+                const float* rowF = upFloat.ptr<float>(r);
+                uchar* rowB      = finalMask.ptr<uchar>(r);
+                for(int c=0; c<finalMask.cols; c++){
+                    rowB[c] = (rowF[c] > 0.f)?255:0;
+                }
+            }
+        }
+
+        // 3) mem-encode => pass decOuts[1] => mask_for_mem + embedData
+        auto tMem0 = std::chrono::steady_clock::now();
+        std::vector<Ort::Value> memEncInputs;
+        memEncInputs.reserve(2);
+        memEncInputs.push_back(std::move(decOuts[1])); // mask_for_mem
+        memEncInputs.push_back(
+            createTensor<float>(m_memoryInfo, embedData, embedShape)
+        );
+
+        auto memEncRes = runMemEncoder(memEncInputs);
+        if (memEncRes.index() == 1) {
+            std::cerr << "[ERROR] memEncoder => "
+                      << std::get<std::string>(memEncRes) << "\n";
+            return finalMask;
+        }
+        auto &memEncOuts = std::get<0>(memEncRes);
+        if(memEncOuts.size() < 3){
+            std::cerr << "[ERROR] memEncOuts <3.\n";
+            return finalMask;
+        }
+        auto tMem1 = std::chrono::steady_clock::now();
+        memEncTimeMs = std::chrono::duration<double, std::milli>(tMem1 - tMem0).count();
+
+        // store memory
+        {
+            float* p = memEncOuts[0].GetTensorMutableData<float>();
+            auto shape = memEncOuts[0].GetTensorTypeAndShapeInfo().GetShape();
+            size_t ct=1; for(auto d: shape) ct*= (size_t)d;
+            m_maskMemFeatures.assign(p, p+ct);
+            m_maskMemFeaturesShape.assign(shape.begin(), shape.end());
+        }
+        {
+            float* p = memEncOuts[1].GetTensorMutableData<float>();
+            auto shape = memEncOuts[1].GetTensorTypeAndShapeInfo().GetShape();
+            size_t ct=1; for(auto d: shape) ct*= (size_t)d;
+            m_maskMemPosEnc.assign(p, p+ct);
+            m_maskMemPosEncShape.assign(shape.begin(), shape.end());
+        }
+        {
+            float* p = memEncOuts[2].GetTensorMutableData<float>();
+            auto shape = memEncOuts[2].GetTensorTypeAndShapeInfo().GetShape();
+            size_t ct=1; for(auto d: shape) ct*= (size_t)d;
+            m_temporalCode.assign(p, p+ct);
+            m_temporalCodeShape.assign(shape.begin(), shape.end());
+        }
+
+        m_hasMemory = true;
+
+        std::cout << "[INFO] Frame0 times => "
+                  << "Enc: " << encTimeMs << " ms, "
+                  << "Dec: " << decTimeMs << " ms, "
+                  << "MemEnc: " << memEncTimeMs << " ms\n";
+
+        return finalMask;
+    }
+    else {
+        // -----------
+        // "Frame N" approach => mem-attention + decode + mem-encode
+        // -----------
+        std::cout << "[INFO] InferMultiFrame => we have memory => frameN.\n";
+        auto tEnc0 = std::chrono::steady_clock::now();
+
+        cv::Size expected = getInputSize();
+        if(resizedFrame.size() != expected || resizedFrame.channels() != 3) {
+            std::cerr << "[ERROR] frameN => mismatch input.\n";
+            return cv::Mat();
+        }
+        std::vector<float> encData = normalizeBGR(resizedFrame);
+
+        std::vector<int64_t> shapeEnc = { 1, 3, (int64_t)expected.height, (int64_t)expected.width };
+
+        Ort::Value encIn = createTensor<float>(m_memoryInfo, encData, shapeEnc);
+
+        std::vector<Ort::Value> encInputs;
+        encInputs.reserve(1);
+        encInputs.push_back(std::move(encIn));
+
+        auto encRes = runImageEncoder(encInputs);
+        if(encRes.index() == 1){
+            std::cerr << "[ERROR] frameN => encoder => "
+                      << std::get<std::string>(encRes) << "\n";
+            return cv::Mat();
+        }
+        auto &encOuts = std::get<0>(encRes);
+        if(encOuts.size() < 5){
+            std::cerr << "[ERROR] frameN => encoder <5.\n";
+            return cv::Mat();
+        }
+        auto tEnc1 = std::chrono::steady_clock::now();
+        encTimeMs = std::chrono::duration<double,std::milli>(tEnc1 - tEnc0).count();
+
+        // => [0] = image_embed [1,256,64,64]
+        // => [4] = vision_pos_embed [4096,1,256]
+
+        // Clone image_embed (used later by mem-encoder)
+        float* embedPtr = encOuts[0].GetTensorMutableData<float>();
+        auto embedShape = encOuts[0].GetTensorTypeAndShapeInfo().GetShape();
+        size_t embedCount=1; for(auto d: embedShape) embedCount *= (size_t)d;
+        std::vector<float> embedData(embedPtr, embedPtr + embedCount);
+
+        // 2) mem-attention => fuse new embed + old memory
+        auto tAttn0 = std::chrono::steady_clock::now();
+        std::vector<Ort::Value> memAttnInputs;
+        memAttnInputs.reserve(5);
+
+        // current_vision_feat
+        memAttnInputs.push_back(std::move(encOuts[0]));
+        // vision_pos_embed
+        memAttnInputs.push_back(std::move(encOuts[4]));
+
+        // memory0 => empty object tokens
+        {
+            std::vector<float> mem0;
+            std::vector<int64_t> mem0Shape = {0,256};
+            memAttnInputs.push_back(createTensor<float>(m_memoryInfo, mem0, mem0Shape));
+        }
+        // memory1 => m_maskMemFeatures
+        memAttnInputs.push_back(createTensor<float>(m_memoryInfo, m_maskMemFeatures, m_maskMemFeaturesShape));
+        // memoryPosEmbed => m_maskMemPosEnc
+        memAttnInputs.push_back(createTensor<float>(m_memoryInfo, m_maskMemPosEnc, m_maskMemPosEncShape));
+
+        auto attnRes = runMemAttention(memAttnInputs);
+        if(attnRes.index() == 1){
+            std::cerr << "[ERROR] memAttn => " << std::get<std::string>(attnRes) << "\n";
+            return cv::Mat();
+        }
+        auto &attnOuts = std::get<0>(attnRes);
+        if(attnOuts.empty()){
+            std::cerr << "[ERROR] memAttn returned empty.\n";
+            return cv::Mat();
+        }
+        auto tAttn1 = std::chrono::steady_clock::now();
+        attnTimeMs = std::chrono::duration<double,std::milli>(tAttn1 - tAttn0).count();
+
+        // => fused_feat => [1,256,64,64]
+        float* fusedData = attnOuts[0].GetTensorMutableData<float>();
+        auto fusedShape  = attnOuts[0].GetTensorTypeAndShapeInfo().GetShape();
+        size_t fusedCount = 1; 
+        for(auto d : fusedShape) fusedCount *= (size_t)d;
+        std::vector<float> fusedVec(fusedData, fusedData + fusedCount);
+
+        // 3) decode => set prompts => final mask
+        auto tDec0 = std::chrono::steady_clock::now();
+        setPrompts(prompts, originalSize);
+
+        int nPts = (int)m_promptPointLabels.size();
+        std::vector<int64_t> shpPts = {1, nPts, 2};
+        std::vector<int64_t> shpLbl = {1, nPts};
+
+        std::vector<Ort::Value> decInputs;
+        decInputs.reserve(5);
+
+        decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointCoords, shpPts));
+        decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointLabels, shpLbl));
+        decInputs.push_back(createTensor<float>(m_memoryInfo, fusedVec, fusedShape));
+        // feats0 => encOuts[1], feats1 => encOuts[2]
+        decInputs.push_back(std::move(encOuts[1]));
+        decInputs.push_back(std::move(encOuts[2]));
+
+        auto decRes = runImageDecoder(decInputs);
+        if(decRes.index() == 1){
+            std::cerr << "[ERROR] decode => " << std::get<std::string>(decRes) << "\n";
+            return cv::Mat();
+        }
+        auto &decOuts = std::get<0>(decRes);
+        if(decOuts.size() < 3){
+            std::cerr << "[ERROR] decode returned <3.\n";
+            return cv::Mat();
+        }
+        auto tDec1 = std::chrono::steady_clock::now();
+        decTimeMs = std::chrono::duration<double,std::milli>(tDec1 - tDec0).count();
+
+        // => decOuts[1] = mask_for_mem => [1,1,1024,1024]
+        // => decOuts[2] = pred_mask    => [1,N,256,256]
+        cv::Mat finalMask;
+        {
+            float* pm = decOuts[2].GetTensorMutableData<float>();
+            auto pmShape = decOuts[2].GetTensorTypeAndShapeInfo().GetShape();
+            int mh = (int)pmShape[2];
+            int mw = (int)pmShape[3];
+            cv::Mat lowRes(mh, mw, CV_32FC1, (void*)pm);
+            cv::Mat upFloat;
+            cv::resize(lowRes, upFloat, originalSize, 0, 0, cv::INTER_LINEAR);
+
+            finalMask.create(originalSize, CV_8UC1);
+            for(int r=0; r<finalMask.rows; r++){
+                const float* rowF = upFloat.ptr<float>(r);
+                uchar* rowB      = finalMask.ptr<uchar>(r);
+                for(int c=0; c<finalMask.cols; c++){
+                    rowB[c] = (rowF[c] > 0.f)?255:0;
+                }
+            }
+        }
+
+        // 4) mem-encode => pass decOuts[1] => mask_for_mem + embedData
+        auto tMem0 = std::chrono::steady_clock::now();
+        std::vector<Ort::Value> memEncInputs;
+        memEncInputs.reserve(2);
+        memEncInputs.push_back(std::move(decOuts[1]));
+        memEncInputs.push_back(
+            createTensor<float>(m_memoryInfo, embedData, embedShape)
+        );
+
+        auto memEncRes = runMemEncoder(memEncInputs);
+        if(memEncRes.index() == 1){
+            std::cerr << "[ERROR] memEncoder => "
+                      << std::get<std::string>(memEncRes) << "\n";
+            return finalMask;
+        }
+        auto &memEncOuts = std::get<0>(memEncRes);
+        if(memEncOuts.size() < 3){
+            std::cerr << "[ERROR] memEncOuts <3.\n";
+            return finalMask;
+        }
+        auto tMem1 = std::chrono::steady_clock::now();
+        memEncTimeMs = std::chrono::duration<double,std::milli>(tMem1 - tMem0).count();
+
+        // store memory
+        {
+            float* p = memEncOuts[0].GetTensorMutableData<float>();
+            auto shape = memEncOuts[0].GetTensorTypeAndShapeInfo().GetShape();
+            size_t ct=1; for(auto d: shape) ct*= (size_t)d;
+            m_maskMemFeatures.assign(p, p+ct);
+            m_maskMemFeaturesShape.assign(shape.begin(), shape.end());
+        }
+        {
+            float* p = memEncOuts[1].GetTensorMutableData<float>();
+            auto shape = memEncOuts[1].GetTensorTypeAndShapeInfo().GetShape();
+            size_t ct=1; for(auto d: shape) ct*= (size_t)d;
+            m_maskMemPosEnc.assign(p, p+ct);
+            m_maskMemPosEncShape.assign(shape.begin(), shape.end());
+        }
+        {
+            float* p = memEncOuts[2].GetTensorMutableData<float>();
+            auto shape = memEncOuts[2].GetTensorTypeAndShapeInfo().GetShape();
+            size_t ct=1; for(auto d: shape) ct*= (size_t)d;
+            m_temporalCode.assign(p, p+ct);
+            m_temporalCodeShape.assign(shape.begin(), shape.end());
+        }
+
+        std::cout << "[INFO] FrameN times => "
+                  << "Enc: " << encTimeMs << " ms, "
+                  << "Attn: " << attnTimeMs << " ms, "
+                  << "Dec: " << decTimeMs << " ms, "
+                  << "MemEnc: " << memEncTimeMs << " ms\n";
+
+        return finalMask;
+    }
+}

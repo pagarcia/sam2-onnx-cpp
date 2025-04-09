@@ -1,14 +1,14 @@
-#include "SAM2Session.h"
-
+#include "SAM2.h"
 #include <fstream>
 #include <stdexcept>
-#include <sstream>
 #include <iostream>
-#include <cstring> // for std::memcpy on some platforms
+#include <sstream>
+#include <opencv2/opencv.hpp>
+#include <cstring> // for memcpy
 
 #ifdef _WIN32
 #include <windows.h>
-// Helper: convert std::string to wstring for ONNX on Windows
+/** Utility to convert std::string to wide string on Windows. */
 static std::wstring strToWstr(const std::string &str)
 {
     int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.size(), NULL, 0);
@@ -21,76 +21,138 @@ static std::wstring strToWstr(const std::string &str)
 // --------------------
 // Constructor / Destructor
 // --------------------
-SAM2Session::SAM2Session()
-{
-    // Could init stuff here if needed
-}
-
-SAM2Session::~SAM2Session()
-{
-    clearAllSessions();
+SAM2::SAM2() {}
+SAM2::~SAM2() {
+    clearSessions();
 }
 
 // --------------------
-// Clear / reset
+// Basic checks / helpers
 // --------------------
-void SAM2Session::clearAllSessions()
-{
-    // Reset all session pointers
-    m_imgEncoderSession.reset();
-    m_imgDecoderSession.reset();
-    m_memAttentionSession.reset();
-    m_memEncoderSession.reset();
-
-    // Clear node vectors
-    m_imgEncoderInputNodes.clear();
-    m_imgEncoderOutputNodes.clear();
-    m_imgDecoderInputNodes.clear();
-    m_imgDecoderOutputNodes.clear();
-    m_memAttentionInputNodes.clear();
-    m_memAttentionOutputNodes.clear();
-    m_memEncoderInputNodes.clear();
-    m_memEncoderOutputNodes.clear();
-
-    // Clear shapes
-    m_encoderInputShape.clear();
-}
-
-// --------------------
-// Check file existence
-// --------------------
-bool SAM2Session::modelFileExists(const std::string &modelPath)
+bool SAM2::modelExists(const std::string &modelPath)
 {
     std::ifstream f(modelPath.c_str());
     return f.good();
 }
 
-// --------------------
-// Get encoder input size
-// e.g. if shape is [1,3,1024,1024], returns (1024,1024)
-// --------------------
-cv::Size SAM2Session::getEncoderInputSize() const
+bool SAM2::clearSessions()
 {
-    if (m_encoderInputShape.size() >= 4) {
+    try {
+        // Reset all session pointers
+        m_imgEncoderSession.reset();
+        m_imgDecoderSession.reset();
+        m_memAttentionSession.reset();
+        m_memEncoderSession.reset();
+
+        // Clear out shape/data vectors
+        m_inputShapeEncoder.clear();
+        m_outputShapeEncoder.clear();
+        m_highResFeatures1Shape.clear();
+        m_highResFeatures2Shape.clear();
+
+        m_outputTensorValuesEncoder.clear();
+        m_highResFeatures1.clear();
+        m_highResFeatures2.clear();
+
+        // Reset memory states for multi-frame usage
+        m_hasMemory = false;
+        m_maskMemFeatures.clear();
+        m_maskMemFeaturesShape.clear();
+        m_maskMemPosEnc.clear();
+        m_maskMemPosEncShape.clear();
+        m_temporalCode.clear();
+        m_temporalCodeShape.clear();
+    }
+    catch(...) {
+        return false;
+    }
+    return true;
+}
+
+cv::Size SAM2::getInputSize()
+{
+    // Typically [1,3,1024,1024] => shape[2]=1024 (H), shape[3]=1024 (W)
+    if (m_inputShapeEncoder.size() >= 4) {
         return cv::Size(
-            static_cast<int>(m_encoderInputShape[3]),
-            static_cast<int>(m_encoderInputShape[2])
+            static_cast<int>(m_inputShapeEncoder[3]),
+            static_cast<int>(m_inputShapeEncoder[2])
         );
     }
-    return cv::Size(0,0);
+    return cv::Size(0, 0);
+}
+
+void SAM2::setupSessionOptions(Ort::SessionOptions &options,
+                               int threadsNumber,
+                               GraphOptimizationLevel optLevel,
+                               const std::string &device)
+{
+    options.SetIntraOpNumThreads(threadsNumber);
+    options.SetGraphOptimizationLevel(optLevel);
+
+    if (device == "cpu") {
+        std::cout << "[DEBUG] Using CPU execution provider." << std::endl;
+        int use_arena = 1;
+        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena);
+        if (status != nullptr) {
+            const char* error_message = Ort::GetApi().GetErrorMessage(status);
+            Ort::GetApi().ReleaseStatus(status);
+            throw std::runtime_error(std::string("Error appending CPU execution provider: ") + error_message);
+        }
+    }
+    else if (device.rfind("cuda:", 0) == 0) {
+        std::cout << "[DEBUG] Using CUDA execution provider." << std::endl;
+        int gpuId = std::stoi(device.substr(5));
+        OrtCUDAProviderOptions cudaOpts;
+        cudaOpts.device_id = gpuId;
+        options.AppendExecutionProvider_CUDA(cudaOpts);
+    }
+    else if (device.rfind("coreml", 0) == 0) {
+#ifdef __APPLE__
+        std::cout << "[DEBUG] Using CoreML execution provider." << std::endl;
+        // For CoreML, you need to provide a uint32_t flag.
+        // Here we use the default flag (COREML_FLAG_USE_NONE). You can modify coreml_flags as needed.
+        uint32_t coreml_flags = COREML_FLAG_USE_NONE;
+        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CoreML(options, coreml_flags);
+        if (status != nullptr) {
+            const char* error_message = Ort::GetApi().GetErrorMessage(status);
+            Ort::GetApi().ReleaseStatus(status);
+            throw std::runtime_error(std::string("Error appending CoreML execution provider: ") + error_message);
+        }
+#else
+        std::cout << "[WARN] CoreML requested but not supported on this platform. Defaulting to CPU." << std::endl;
+        int use_arena = 1;
+        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena);
+        if (status != nullptr) {
+            const char* error_message = Ort::GetApi().GetErrorMessage(status);
+            Ort::GetApi().ReleaseStatus(status);
+            throw std::runtime_error(std::string("Error appending CPU execution provider: ") + error_message);
+        }
+#endif
+    }
+    else {
+        std::cout << "[DEBUG] Unknown device type. Defaulting to CPU execution provider." << std::endl;
+        int use_arena = 1;
+        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena);
+        if (status != nullptr) {
+            const char* error_message = Ort::GetApi().GetErrorMessage(status);
+            Ort::GetApi().ReleaseStatus(status);
+            throw std::runtime_error(std::string("Error appending default CPU execution provider: ") + error_message);
+        }
+    }
 }
 
 // --------------------
-// Initialize image (encoder+decoder)
+// Initialize methods
 // --------------------
-bool SAM2Session::initializeImage(const std::string &encoderPath,
-                                   const std::string &decoderPath,
-                                   int threadsNumber,
-                                   const std::string &device)
+bool SAM2::initialize(const std::string &encoderPath,
+                      const std::string &decoderPath,
+                      int threadsNumber,
+                      std::string device)
 {
-    clearAllSessions();
-    if (!modelFileExists(encoderPath) || !modelFileExists(decoderPath)) {
-        std::cerr << "[ERROR] SAM2_Session::initializeImage => file not found.\n";
+    clearSessions();
+
+    if (!modelExists(encoderPath) || !modelExists(decoderPath)) {
+        std::cerr << "[ERROR] Model file not found.\n";
         return false;
     }
 
@@ -99,269 +161,204 @@ bool SAM2Session::initializeImage(const std::string &encoderPath,
     setupSessionOptions(m_decoderOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
 
     try {
-#ifdef _WIN32
+    #ifdef _WIN32
         std::wstring wEnc = strToWstr(encoderPath);
         std::wstring wDec = strToWstr(decoderPath);
 
-        m_imgEncoderSession = std::make_unique<Ort::Session>(m_envEncoder, wEnc.c_str(), m_encoderOptions);
-        m_imgDecoderSession = std::make_unique<Ort::Session>(m_envDecoder, wDec.c_str(), m_decoderOptions);
-#else
-        m_imgEncoderSession_ = std::make_unique<Ort::Session>(m_envEncoder, encoderPath.c_str(), m_encoderOptions);
-        m_imgDecoderSession_ = std::make_unique<Ort::Session>(m_envDecoder, decoderPath.c_str(), m_decoderOptions);
-#endif
+        m_imgEncoderSession = std::make_unique<Ort::Session>(m_encoderEnv, wEnc.c_str(), m_encoderOptions);
+        m_imgDecoderSession = std::make_unique<Ort::Session>(m_decoderEnv, wDec.c_str(), m_decoderOptions);
+    #else
+        m_imgEncoderSession = std::make_unique<Ort::Session>(m_encoderEnv, encoderPath.c_str(), m_encoderOptions);
+        m_imgDecoderSession = std::make_unique<Ort::Session>(m_decoderEnv, decoderPath.c_str(), m_decoderOptions);
+    #endif
 
-        // ---------------------
-        // Query shapes for the encoder's input + output(s)
-        // e.g. [1,3,1024,1024] => input; outputs => [1,256,64,64] plus other high-res feats
-        // ---------------------
+        // Query shapes for the encoder's 3 main outputs
         {
-            // The encoder might have multiple inputs, but typically 1 for your scenario
-            // We'll just do the first input:
-            auto inInfo = m_imgEncoderSession->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo();
-            m_encoderInputShape = inInfo.GetShape(); // store for later reference
-            // We can parse output shapes similarly, or we can do it on-demand
+            auto encInputInfo = m_imgEncoderSession->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo();
+            m_inputShapeEncoder = encInputInfo.GetShape();
+
+            auto out0Info = m_imgEncoderSession->GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo();
+            m_outputShapeEncoder = out0Info.GetShape();
+
+            auto out1Info = m_imgEncoderSession->GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo();
+            m_highResFeatures1Shape = out1Info.GetShape();
+
+            auto out2Info = m_imgEncoderSession->GetOutputTypeInfo(2).GetTensorTypeAndShapeInfo();
+            m_highResFeatures2Shape = out2Info.GetShape();
         }
 
-        // Build img_encoder_input_nodes_ / output_nodes_
+        // Gather input/output node info for the encoder
         {
             Ort::AllocatorWithDefaultOptions alloc;
-            size_t inCount = m_imgEncoderSession->GetInputCount();
             m_imgEncoderInputNodes.clear();
-            m_imgEncoderInputNodes.reserve(inCount);
-            for (size_t i = 0; i < inCount; i++) {
+            size_t inCountEnc = m_imgEncoderSession->GetInputCount();
+            for (size_t i = 0; i < inCountEnc; i++) {
                 Node node;
-                auto inName = m_imgEncoderSession->GetInputNameAllocated(i, alloc);
-                node.name = std::string(inName.get());
-
+                auto inNamePtr = m_imgEncoderSession->GetInputNameAllocated(i, alloc);
+                node.name = std::string(inNamePtr.get());
                 auto shape = m_imgEncoderSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
-
                 m_imgEncoderInputNodes.push_back(std::move(node));
             }
-            size_t outCount = m_imgEncoderSession->GetOutputCount();
-            m_imgEncoderOutputNodes.clear();
-            m_imgEncoderOutputNodes.reserve(outCount);
-            for (size_t i = 0; i < outCount; i++) {
-                Node node;
-                auto outName = m_imgEncoderSession->GetOutputNameAllocated(i, alloc);
-                node.name = std::string(outName.get());
 
+            m_imgEncoderOutputNodes.clear();
+            size_t outCountEnc = m_imgEncoderSession->GetOutputCount();
+            for (size_t i = 0; i < outCountEnc; i++) {
+                Node node;
+                auto outNamePtr = m_imgEncoderSession->GetOutputNameAllocated(i, alloc);
+                node.name = std::string(outNamePtr.get());
                 auto shape = m_imgEncoderSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
-
                 m_imgEncoderOutputNodes.push_back(std::move(node));
             }
         }
 
-        // Build img_decoder_input_nodes_ / output_nodes_ similarly
+        // Gather input/output node info for the decoder
         {
             Ort::AllocatorWithDefaultOptions alloc;
-            size_t inCount = m_imgDecoderSession->GetInputCount();
             m_imgDecoderInputNodes.clear();
-            m_imgDecoderInputNodes.reserve(inCount);
-            for (size_t i = 0; i < inCount; i++) {
+            size_t inCountDec = m_imgDecoderSession->GetInputCount();
+            for (size_t i = 0; i < inCountDec; i++) {
                 Node node;
-                auto inName = m_imgDecoderSession->GetInputNameAllocated(i, alloc);
-                node.name = std::string(inName.get());
-
+                auto inNamePtr = m_imgDecoderSession->GetInputNameAllocated(i, alloc);
+                node.name = std::string(inNamePtr.get());
                 auto shape = m_imgDecoderSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
                 m_imgDecoderInputNodes.push_back(std::move(node));
             }
-            size_t outCount = m_imgDecoderSession->GetOutputCount();
-            m_imgDecoderOutputNodes.clear();
-            m_imgDecoderOutputNodes.reserve(outCount);
-            for (size_t i = 0; i < outCount; i++) {
-                Node node;
-                auto outName = m_imgDecoderSession->GetOutputNameAllocated(i, alloc);
-                node.name = std::string(outName.get());
 
+            m_imgDecoderOutputNodes.clear();
+            size_t outCountDec = m_imgDecoderSession->GetOutputCount();
+            for (size_t i = 0; i < outCountDec; i++) {
+                Node node;
+                auto outNamePtr = m_imgDecoderSession->GetOutputNameAllocated(i, alloc);
+                node.name = std::string(outNamePtr.get());
                 auto shape = m_imgDecoderSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
                 m_imgDecoderOutputNodes.push_back(std::move(node));
             }
         }
 
-        std::cout << "[DEBUG] SAM2_Session::initializeImage => success.\n";
+        std::cout << "[DEBUG] SAM2::initialize() success.\n";
     }
     catch(const std::exception &e) {
-        std::cerr << "[ERROR] initializeImage => " << e.what() << std::endl;
+        std::cerr << "[ERROR] SAM2::initialize() => " << e.what() << std::endl;
         return false;
     }
 
     return true;
 }
 
-// --------------------
-// Initialize memory-based models
-// --------------------
-bool SAM2Session::initializeVideo(const std::string &memAttentionPath,
-                                   const std::string &memEncoderPath,
-                                   int threadsNumber,
-                                   const std::string &device)
+bool SAM2::initializeVideo(const std::string &encoderPath,
+                           const std::string &decoderPath,
+                           const std::string &memAttentionPath,
+                           const std::string &memEncoderPath,
+                           int threadsNumber,
+                           std::string device)
 {
-    // We assume the image sessions are already loaded or not, depending on your usage
-    if(!modelFileExists(memAttentionPath) || !modelFileExists(memEncoderPath)) {
-        std::cerr << "[ERROR] memory model files not found.\n";
+    if(!initialize(encoderPath, decoderPath, threadsNumber, device)) {
+        std::cerr << "[ERROR] initializeVideo => base init failed.\n";
+        return false;
+    }
+    if(!modelExists(memAttentionPath) || !modelExists(memEncoderPath)) {
+        std::cerr << "[ERROR] memory models not found.\n";
         return false;
     }
 
-    // Setup
     setupSessionOptions(m_memAttentionOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
     setupSessionOptions(m_memEncoderOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
 
     try {
-#ifdef _WIN32
+    #ifdef _WIN32
         std::wstring wAttn = strToWstr(memAttentionPath);
         std::wstring wEnc2 = strToWstr(memEncoderPath);
 
-        m_memAttentionSession = std::make_unique<Ort::Session>(m_envMemAttention, wAttn.c_str(), m_memAttentionOptions);
-        m_memEncoderSession = std::make_unique<Ort::Session>(m_envMemEncoder, wEnc2.c_str(), m_memEncoderOptions);
-#else
-        m_memAttentionSession = std::make_unique<Ort::Session>(m_envMemAttention, memAttentionPath.c_str(), m_memAttentionOptions);
-        m_memEncoderSession = std::make_unique<Ort::Session>(m_envMemEncoder, memEncoderPath.c_str(), m_memEncoderOptions);
-#endif
+        m_memAttentionSession = std::make_unique<Ort::Session>(m_memAttentionEnv, wAttn.c_str(), m_memAttentionOptions);
+        m_memEncoderSession  = std::make_unique<Ort::Session>(m_memEncoderEnv, wEnc2.c_str(), m_memEncoderOptions);
+    #else
+        m_memAttentionSession = std::make_unique<Ort::Session>(m_memAttentionEnv, memAttentionPath.c_str(), m_memAttentionOptions);
+        m_memEncoderSession  = std::make_unique<Ort::Session>(m_memEncoderEnv, memEncoderPath.c_str(), m_memEncoderOptions);
+    #endif
 
-        // Build mem_attention_input_nodes_, etc.
+        // gather node info for mem_attention
         {
             Ort::AllocatorWithDefaultOptions alloc;
-            size_t inCount = m_memAttentionSession->GetInputCount();
             m_memAttentionInputNodes.clear();
-            m_memAttentionInputNodes.reserve(inCount);
-            for (size_t i=0; i<inCount; i++) {
+            size_t inCount= m_memAttentionSession->GetInputCount();
+            for(size_t i=0; i<inCount; i++){
                 Node node;
-                auto inName = m_memAttentionSession->GetInputNameAllocated(i, alloc);
-                node.name = std::string(inName.get());
-                auto shape = m_memAttentionSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
+                auto inName= m_memAttentionSession->GetInputNameAllocated(i,alloc);
+                node.name= std::string(inName.get());
+                auto shape= m_memAttentionSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
                 m_memAttentionInputNodes.push_back(std::move(node));
             }
-
-            size_t outCount = m_memAttentionSession->GetOutputCount();
             m_memAttentionOutputNodes.clear();
-            m_memAttentionOutputNodes.reserve(outCount);
-            for (size_t i=0; i<outCount; i++) {
+            size_t outCount= m_memAttentionSession->GetOutputCount();
+            for(size_t i=0; i<outCount; i++){
                 Node node;
-                auto outName = m_memAttentionSession->GetOutputNameAllocated(i, alloc);
-                node.name = std::string(outName.get());
-                auto shape = m_memAttentionSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
+                auto outName= m_memAttentionSession->GetOutputNameAllocated(i,alloc);
+                node.name= std::string(outName.get());
+                auto shape= m_memAttentionSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
                 m_memAttentionOutputNodes.push_back(std::move(node));
             }
         }
-        // Build mem_encoder_input_nodes_, etc.
+
+        // gather node info for mem_encoder
         {
             Ort::AllocatorWithDefaultOptions alloc;
-            size_t inCount = m_memEncoderSession->GetInputCount();
             m_memEncoderInputNodes.clear();
-            m_memEncoderInputNodes.reserve(inCount);
-            for (size_t i=0; i<inCount; i++){
+            size_t inCount= m_memEncoderSession->GetInputCount();
+            for(size_t i=0; i<inCount; i++){
                 Node node;
-                auto inName = m_memEncoderSession->GetInputNameAllocated(i,alloc);
-                node.name = std::string(inName.get());
-                auto shape = m_memEncoderSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
+                auto inName= m_memEncoderSession->GetInputNameAllocated(i,alloc);
+                node.name= std::string(inName.get());
+                auto shape= m_memEncoderSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
                 m_memEncoderInputNodes.push_back(std::move(node));
             }
-
-            size_t outCount = m_memEncoderSession->GetOutputCount();
             m_memEncoderOutputNodes.clear();
-            m_memEncoderOutputNodes.reserve(outCount);
-            for (size_t i=0; i<outCount; i++){
+            size_t outCount= m_memEncoderSession->GetOutputCount();
+            for(size_t i=0; i<outCount; i++){
                 Node node;
-                auto outName = m_memEncoderSession->GetOutputNameAllocated(i,alloc);
-                node.name = std::string(outName.get());
-                auto shape = m_memEncoderSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
+                auto outName= m_memEncoderSession->GetOutputNameAllocated(i,alloc);
+                node.name= std::string(outName.get());
+                auto shape= m_memEncoderSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
                 node.dim.assign(shape.begin(), shape.end());
                 m_memEncoderOutputNodes.push_back(std::move(node));
             }
         }
 
-        std::cout << "[DEBUG] SAM2_Session::initializeVideo => success.\n";
+        std::cout<<"[DEBUG] SAM2::initializeVideo() => memAttn+memEnc loaded.\n";
     }
-    catch(const std::exception &e) {
-        std::cerr << "[ERROR] initializeVideo => " << e.what() << std::endl;
+    catch(const std::exception &e){
+        std::cerr<<"[ERROR] initVideo => "<< e.what()<<"\n";
         return false;
     }
     return true;
 }
 
 // --------------------
-// Setup session options
-// (CPU, CUDA, CoreML, etc.)
-// --------------------
-void SAM2Session::setupSessionOptions(Ort::SessionOptions &options,
-                                       int threadsNumber,
-                                       GraphOptimizationLevel optLevel,
-                                       const std::string &device)
-{
-    options.SetIntraOpNumThreads(threadsNumber);
-    options.SetGraphOptimizationLevel(optLevel);
-
-    if(device == "cpu") {
-        std::cout << "[DEBUG] Using CPU EP.\n";
-        int use_arena = 1;
-        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena);
-        if(status != nullptr) {
-            const char* err = Ort::GetApi().GetErrorMessage(status);
-            Ort::GetApi().ReleaseStatus(status);
-            throw std::runtime_error(std::string("Error appending CPU provider: ")+err);
-        }
-    } 
-    else if(device.rfind("cuda:", 0) == 0) {
-        std::cout << "[DEBUG] Using CUDA EP.\n";
-        int gpuId = std::stoi(device.substr(5));
-        OrtCUDAProviderOptions cudaOpts;
-        cudaOpts.device_id = gpuId;
-        // If needed, set other cudaOpts fields
-        options.AppendExecutionProvider_CUDA(cudaOpts);
-    }
-#ifdef __APPLE__
-    else if(device.rfind("coreml", 0) == 0) {
-        std::cout << "[DEBUG] Using CoreML EP.\n";
-        uint32_t coreml_flags = COREML_FLAG_USE_NONE;
-        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CoreML(options, coreml_flags);
-        if(status != nullptr) {
-            const char* err = Ort::GetApi().GetErrorMessage(status);
-            Ort::GetApi().ReleaseStatus(status);
-            throw std::runtime_error(std::string("Error appending CoreML provider: ")+err);
-        }
-    }
-#endif
-    else {
-        // Fallback
-        std::cout << "[DEBUG] Unknown device => fallback to CPU.\n";
-        int use_arena = 1;
-        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena);
-        if(status != nullptr) {
-            const char* err = Ort::GetApi().GetErrorMessage(status);
-            Ort::GetApi().ReleaseStatus(status);
-            throw std::runtime_error(std::string("Error appending default CPU provider: ")+err);
-        }
-    }
-}
-
-// --------------------
-// runSession helper
+// The single runSession helper
 // --------------------
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2Session::runSession(Ort::Session* session,
-                         const std::vector<Node> &inputNodes,
-                         const std::vector<Node> &outputNodes,
-                         const std::vector<Ort::Value> &inputTensors,
-                         const std::string &debugName)
+SAM2::runSession(Ort::Session* session,
+                 const std::vector<Node> &inputNodes,
+                 const std::vector<Node> &outputNodes,
+                 const std::vector<Ort::Value> &inputTensors,
+                 const std::string &debugName)
 {
-    if(!session) {
-        return std::string("[ERROR] runSession(" + debugName + "): session is null.\n");
+    if(!session){
+        return std::string("[ERROR] runSession("+debugName+"): session is null.\n");
     }
-    std::vector<const char*> inNames;
+    std::vector<const char*> inNames, outNames;
     inNames.reserve(inputNodes.size());
+    outNames.reserve(outputNodes.size());
+
     for(const auto &nd : inputNodes) {
         inNames.push_back(nd.name.c_str());
     }
-
-    std::vector<const char*> outNames;
-    outNames.reserve(outputNodes.size());
     for(const auto &nd : outputNodes) {
         outNames.push_back(nd.name.c_str());
     }
@@ -370,14 +367,14 @@ SAM2Session::runSession(Ort::Session* session,
         auto outputs = session->Run(
             Ort::RunOptions{nullptr},
             inNames.data(),
-            const_cast<Ort::Value*>(inputTensors.data()), // ORT expects non-const
+            const_cast<Ort::Value*>(inputTensors.data()),  // ORT wants non-const
             inputTensors.size(),
             outNames.data(),
             outNames.size()
         );
         return outputs; // success => vector<Ort::Value>
     }
-    catch(const std::exception &e) {
+    catch(const std::exception &e){
         std::ostringstream oss;
         oss << "[ERROR] runSession(" << debugName << ") => " << e.what();
         return oss.str();
@@ -385,44 +382,44 @@ SAM2Session::runSession(Ort::Session* session,
 }
 
 // --------------------
-// Model sub-runs
+// 4 pipeline-step methods
 // --------------------
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2Session::runImageEncoder(const std::vector<Ort::Value> &inputTensors)
+SAM2::runImageEncoder(const std::vector<Ort::Value> &inputTensors)
 {
     return runSession(m_imgEncoderSession.get(),
                       m_imgEncoderInputNodes,
                       m_imgEncoderOutputNodes,
                       inputTensors,
-                      "img_encoder_session");
+                      "imgEncoderSession");
 }
 
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2Session::runImageDecoder(const std::vector<Ort::Value> &inputTensors)
+SAM2::runImageDecoder(const std::vector<Ort::Value> &inputTensors)
 {
     return runSession(m_imgDecoderSession.get(),
                       m_imgDecoderInputNodes,
                       m_imgDecoderOutputNodes,
                       inputTensors,
-                      "img_decoder_session");
+                      "imgDecoderSession");
 }
 
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2Session::runMemAttention(const std::vector<Ort::Value> &inputTensors)
+SAM2::runMemAttention(const std::vector<Ort::Value> &inputTensors)
 {
     return runSession(m_memAttentionSession.get(),
                       m_memAttentionInputNodes,
                       m_memAttentionOutputNodes,
                       inputTensors,
-                      "mem_attention_session");
+                      "memAttentionSession");
 }
 
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2Session::runMemEncoder(const std::vector<Ort::Value> &inputTensors)
+SAM2::runMemEncoder(const std::vector<Ort::Value> &inputTensors)
 {
     return runSession(m_memEncoderSession.get(),
                       m_memEncoderInputNodes,
                       m_memEncoderOutputNodes,
                       inputTensors,
-                      "mem_encoder_session");
+                      "memEncoderSession");
 }
