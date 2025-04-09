@@ -80,8 +80,8 @@ public:
                          std::string device = "cpu");
 
     // For single-frame usage:
-    bool preprocessImage(const cv::Mat &image);
-    cv::Mat InferSingleFrame(const Size &originalSize);
+    bool preprocessImage(const cv::Mat &originalImage);
+    cv::Mat InferSingleFrame(const Size &originalImageSize);
 
     // For multi-frame usage:
     void setPrompts(const Prompts &prompts, const Size &originalImageSize);
@@ -109,14 +109,10 @@ public:
                                     const std::string &device);
 
     // Exposed pipeline-step methods (optional advanced usage):
-    std::variant<std::vector<Ort::Value>, std::string>
-        runImageEncoder(const std::vector<Ort::Value> &inputTensors);
-    std::variant<std::vector<Ort::Value>, std::string>
-        runImageDecoder(const std::vector<Ort::Value> &inputTensors);
-    std::variant<std::vector<Ort::Value>, std::string>
-        runMemAttention(const std::vector<Ort::Value> &inputTensors);
-    std::variant<std::vector<Ort::Value>, std::string>
-        runMemEncoder(const std::vector<Ort::Value> &inputTensors);
+    std::variant<std::vector<Ort::Value>, std::string> runImageEncoder(const std::vector<Ort::Value> &inputTensors);
+    std::variant<std::vector<Ort::Value>, std::string> runImageDecoder(const std::vector<Ort::Value> &inputTensors);
+    std::variant<std::vector<Ort::Value>, std::string> runMemAttention(const std::vector<Ort::Value> &inputTensors);
+    std::variant<std::vector<Ort::Value>, std::string> runMemEncoder(const std::vector<Ort::Value> &inputTensors);
 
 private:
     bool clearSessions();

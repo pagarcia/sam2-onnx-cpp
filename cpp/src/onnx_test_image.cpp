@@ -16,8 +16,8 @@ struct AppState {
     SAM2 sam;
     cv::Mat originalImage;
     cv::Mat displayImage;
-    Size imageSize;   // original image size
-    Size inputSize;   // e.g. 1024x1024
+    Size originalImageSize;   // original image size
+    Size SAM2ImageSize;   // e.g. 1024x1024
 
     // Instead of storing scaled points, store them in original coords
     vector<Point> clickedPoints;
@@ -44,10 +44,10 @@ static void updateDisplay(AppState* state) {
         prompts.pointLabels = state->pointLabels;
 
         // setPrompts => scales + stores
-        state->sam.setPrompts(prompts, state->imageSize);
+        state->sam.setPrompts(prompts, state->originalImageSize);
 
         auto t0 = high_resolution_clock::now();
-        cv::Mat mask = state->sam.InferSingleFrame(state->imageSize);
+        cv::Mat mask = state->sam.InferSingleFrame(state->originalImageSize);
         auto t1 = high_resolution_clock::now();
         auto ms = duration_cast<milliseconds>(t1 - t0).count();
         cout << "[INFO] Segmentation took " << ms << " ms." << endl;
@@ -166,8 +166,8 @@ int runOnnxTestImage(int argc, char** argv)
         cerr << "[ERROR] Could not load image from " << imagePath << endl;
         return -1;
     }
-    state.imageSize.width = state.originalImage.size().width;
-    state.imageSize.height = state.originalImage.size().height;
+    state.originalImageSize.width = state.originalImage.size().width;
+    state.originalImageSize.height = state.originalImage.size().height;
 
     // 4) Check for GPU availability
     bool cudaAvailable = false;
@@ -217,14 +217,14 @@ int runOnnxTestImage(int argc, char** argv)
     else        cout << "[INFO] *** CPU inference is in use ***\n\n";
 
     // 6) Resize to match the encoder input (e.g. 1024x1024)
-    state.inputSize = state.sam.getInputSize();
-    if (state.inputSize.width <= 0 || state.inputSize.height <= 0) {
+    state.SAM2ImageSize = state.sam.getInputSize();
+    if (state.SAM2ImageSize.width <= 0 || state.SAM2ImageSize.height <= 0) {
         cerr << "[ERROR] Invalid model input size.\n";
         return -1;
     }
 
     cv::Mat resized;
-    cv::resize(state.originalImage, resized, cv::Size(state.inputSize.width, state.inputSize.height));
+    cv::resize(state.originalImage, resized, cv::Size(state.SAM2ImageSize.width, state.SAM2ImageSize.height));
 
     // 7) Preprocess => runs the "ImageEncoder"
     auto preStart = high_resolution_clock::now();

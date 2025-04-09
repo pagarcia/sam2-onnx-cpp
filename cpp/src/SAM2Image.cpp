@@ -40,17 +40,17 @@ std::vector<float> SAM2::normalizeBGR(const cv::Mat &bgrImg)
 // --------------------
 // Single-frame usage
 // --------------------
-bool SAM2::preprocessImage(const cv::Mat &image)
+bool SAM2::preprocessImage(const cv::Mat &originalImage)
 {
     try {
         Size expected = getInputSize();
-        if(image.size().width != expected.width || image.size().height != expected.height || image.channels() != 3){
+        if(originalImage.size().width != expected.width || originalImage.size().height != expected.height || originalImage.channels() != 3){
             std::cerr << "[WARN] mismatch in preprocessImage.\n";
             return false;
         }
 
         // Convert BGR to normalized float
-        std::vector<float> data = normalizeBGR(image);
+        std::vector<float> data = normalizeBGR(originalImage);
 
         // Create an input tensor
         Ort::Value inTensor = createTensor<float>(m_memoryInfo, data, m_inputShapeEncoder);
@@ -98,7 +98,7 @@ bool SAM2::preprocessImage(const cv::Mat &image)
     }
 }
 
-cv::Mat SAM2::InferSingleFrame(const Size &originalSize)
+cv::Mat SAM2::InferSingleFrame(const Size &originalImageSize)
 {
     if(m_promptPointLabels.empty() || m_promptPointCoords.empty()){
         std::cerr << "[WARN] InferSingleFrame => no prompts.\n";
@@ -146,9 +146,9 @@ cv::Mat SAM2::InferSingleFrame(const Size &originalSize)
 
     cv::Mat lowRes(maskH, maskW, CV_32FC1, (void*)pmData);
     cv::Mat upFloat;
-    cv::resize(lowRes, upFloat, cv::Size(originalSize.width, originalSize.height), 0, 0, cv::INTER_LINEAR);
+    cv::resize(lowRes, upFloat, cv::Size(originalImageSize.width, originalImageSize.height), 0, 0, cv::INTER_LINEAR);
 
-    cv::Mat finalMask(cv::Size(originalSize.width, originalSize.height), CV_8UC1, cv::Scalar(0));
+    cv::Mat finalMask(cv::Size(originalImageSize.width, originalImageSize.height), CV_8UC1, cv::Scalar(0));
     for(int r=0; r<finalMask.rows; r++){
         const float* rowF = upFloat.ptr<float>(r);
         uchar* rowB      = finalMask.ptr<uchar>(r);
