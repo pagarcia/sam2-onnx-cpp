@@ -223,12 +223,9 @@ int runOnnxTestImage(int argc, char** argv)
         return -1;
     }
 
-    cv::Mat resized;
-    cv::resize(state.originalImage, resized, cv::Size(state.SAM2ImageSize.width, state.SAM2ImageSize.height));
-
     // 7) Preprocess => runs the "ImageEncoder"
     auto preStart = high_resolution_clock::now();
-    if (!state.sam.preprocessImage(resized)) {
+    if (!state.sam.preprocessImage(state.originalImage)) {
         cerr << "[ERROR] preprocessImage failed.\n";
         return -1;
     }

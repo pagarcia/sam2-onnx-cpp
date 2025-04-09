@@ -43,14 +43,12 @@ std::vector<float> SAM2::normalizeBGR(const cv::Mat &bgrImg)
 bool SAM2::preprocessImage(const cv::Mat &originalImage)
 {
     try {
-        Size expected = getInputSize();
-        if(originalImage.size().width != expected.width || originalImage.size().height != expected.height || originalImage.channels() != 3){
-            std::cerr << "[WARN] mismatch in preprocessImage.\n";
-            return false;
-        }
+        Size SAM2ImageSize = getInputSize();
+        cv::Mat SAM2Image;
+        cv::resize(originalImage, SAM2Image, cv::Size(SAM2ImageSize.width, SAM2ImageSize.height));
 
         // Convert BGR to normalized float
-        std::vector<float> data = normalizeBGR(originalImage);
+        std::vector<float> data = normalizeBGR(SAM2Image);
 
         // Create an input tensor
         Ort::Value inTensor = createTensor<float>(m_memoryInfo, data, m_inputShapeEncoder);

@@ -280,11 +280,8 @@ int runOnnxTestVideo(int argc, char** argv)
     }
 
     // Preprocess the first frame => single-frame usage
-    cv::Mat resizedFirst;
-    cv::resize(firstFrameBGR, resizedFirst, cv::Size(st.inputSize.width, st.inputSize.height));
-
     auto preT0=std::chrono::steady_clock::now();
-    if(!sam.preprocessImage(resizedFirst)){
+    if(!sam.preprocessImage(firstFrameBGR)){
         std::cerr<<"[ERROR] preprocessImage failed.\n";
         return 1;
     }
