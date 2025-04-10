@@ -84,7 +84,6 @@ public:
     cv::Mat InferSingleFrame(const Size &originalImageSize);
 
     // For multi-frame usage:
-    void setPrompts(const Prompts &prompts, const Size &originalImageSize);
     cv::Mat InferMultiFrame(const cv::Mat &originalImage,
                             const Prompts &prompts);
 
@@ -92,7 +91,9 @@ public:
     Size getInputSize();
     bool modelExists(const std::string &modelPath);
 
-    // Optional label helpers
+    // Prompt and helpers
+    void setPrompts(const Prompts &prompts, 
+                    const Size &originalImageSize);
     void setRectsLabels(const std::list<Rect> &rects,
                         std::vector<float> *inputPointValues,
                         std::vector<float> *inputLabelValues);
@@ -100,6 +101,10 @@ public:
                          int label,
                          std::vector<float> *inputPointValues,
                          std::vector<float> *inputLabelValues);
+    cv::Mat createBinaryMask(const Size &targetSize, 
+                             const Size &maskSize, 
+                             float *maskData, 
+                             float threshold = 0.f);
 
     // ORT session config
     static void setupSessionOptions(Ort::SessionOptions &options,

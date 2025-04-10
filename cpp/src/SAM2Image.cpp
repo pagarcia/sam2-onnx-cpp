@@ -122,6 +122,7 @@ cv::Mat SAM2::InferSingleFrame(const Size &originalImageSize)
     // 4) feats_1
     decInputs.push_back(createTensor<float>(m_memoryInfo, m_highResFeatures2, m_highResFeatures2Shape));
 
+    // Run the decoder
     auto decRes = runImageDecoder(decInputs);
     if(decRes.index() == 1){
         std::cerr << "[ERROR] InferSingleFrame => decode => " << std::get<std::string>(decRes) << "\n";
@@ -142,24 +143,14 @@ cv::Mat SAM2::InferSingleFrame(const Size &originalImageSize)
     int maskH = (int)pmShape[2];
     int maskW = (int)pmShape[3];
 
-    cv::Mat lowRes(maskH, maskW, CV_32FC1, (void*)pmData);
-    cv::Mat upFloat;
-    cv::resize(lowRes, upFloat, cv::Size(originalImageSize.width, originalImageSize.height), 0, 0, cv::INTER_LINEAR);
-
-    cv::Mat finalMask(cv::Size(originalImageSize.width, originalImageSize.height), CV_8UC1, cv::Scalar(0));
-    for(int r=0; r<finalMask.rows; r++){
-        const float* rowF = upFloat.ptr<float>(r);
-        uchar* rowB      = finalMask.ptr<uchar>(r);
-        for(int c=0; c<finalMask.cols; c++){
-            rowB[c] = (rowF[c] > 0.f) ? 255 : 0;
-        }
-    }
-    return finalMask;
+    // Create a low-resolution floar mask image from the decoder output and convert it to binary uchar mask
+    cv::Mat originalImageSizeBinaryMask = createBinaryMask(originalImageSize, Size(maskW, maskH), pmData);
+    return originalImageSizeBinaryMask;
 }
 
-// ------------------------
-// Prompt and label helpers
-// ------------------------
+// ------------------
+// Prompt and helpers
+// ------------------
 void SAM2::setPrompts(const Prompts &prompts, const Size &originalImageSize)
 {
     m_promptPointCoords.clear();
@@ -225,4 +216,31 @@ void SAM2::setPointsLabels(const std::list<Point> &points,
         inputPointValues->push_back((float)pt.y);
         inputLabelValues->push_back((float)label);
     }
+}
+
+cv::Mat SAM2::createBinaryMask(const Size &targetSize, 
+                               const Size &maskSize, 
+                               float *maskData, 
+                               float threshold)
+{
+    // Create a low-resolution float mask from the raw data.
+    cv::Mat lowResFloatMask(maskSize.height, maskSize.width, CV_32FC1, static_cast<void*>(maskData));
+    
+    // Resize to the target size (convert from SAM2::Size to cv::Size).
+    cv::Mat resizedFloatMask;
+    cv::resize(lowResFloatMask, resizedFloatMask,
+               cv::Size(targetSize.width, targetSize.height), 0, 0, cv::INTER_LINEAR);
+    
+    // Create a binary mask with the target size.
+    cv::Mat binaryMask(cv::Size(targetSize.width, targetSize.height), CV_8UC1, cv::Scalar(0));
+    
+    // Manual loop to convert the upscaled float mask to a binary mask.
+    for (int r = 0; r < binaryMask.rows; ++r) {
+        const float* srcRow = resizedFloatMask.ptr<float>(r);
+        uchar* dstRow = binaryMask.ptr<uchar>(r);
+        for (int c = 0; c < binaryMask.cols; ++c) {
+            dstRow[c] = (srcRow[c] > threshold) ? 255 : 0;
+        }
+    }
+    return binaryMask;
 }

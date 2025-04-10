@@ -106,49 +106,28 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &originalImage,
         // decOuts[1] = mask_for_mem => [1,1,1024,1024]
         // decOuts[2] = pred_mask    => [1,N,256,256]
         // build final mask
-        cv::Mat finalMask;
-        {
-            float* pm = decOuts[2].GetTensorMutableData<float>();
-            auto pmShape = decOuts[2].GetTensorTypeAndShapeInfo().GetShape();
-            if(pmShape.size() < 4){
-                std::cerr << "[ERROR] pred_mask shape?\n";
-                return cv::Mat();
-            }
-            int mh = (int)pmShape[2];
-            int mw = (int)pmShape[3];
-            cv::Mat lowRes(mh, mw, CV_32FC1, (void*)pm);
-            cv::Mat upFloat;
-            cv::resize(lowRes, upFloat, cv::Size(originalImageSize.width, originalImageSize.height), 0, 0, cv::INTER_LINEAR);
-
-            finalMask.create(cv::Size(originalImageSize.width, originalImageSize.height), CV_8UC1);
-            for(int r=0; r<finalMask.rows; r++){
-                const float* rowF = upFloat.ptr<float>(r);
-                uchar* rowB      = finalMask.ptr<uchar>(r);
-                for(int c=0; c<finalMask.cols; c++){
-                    rowB[c] = (rowF[c] > 0.f)?255:0;
-                }
-            }
-        }
+        float* pm = decOuts[2].GetTensorMutableData<float>();
+        auto pmShape = decOuts[2].GetTensorTypeAndShapeInfo().GetShape();
+        int maskHeight = (int)pmShape[2];
+        int maskWidth = (int)pmShape[3];
+        cv::Mat originalImageSizeBinaryMask = createBinaryMask(originalImageSize, Size(maskWidth, maskHeight), pm);
 
         // 3) mem-encode => pass decOuts[1] => mask_for_mem + embedData
         auto tMem0 = std::chrono::steady_clock::now();
         std::vector<Ort::Value> memEncInputs;
         memEncInputs.reserve(2);
         memEncInputs.push_back(std::move(decOuts[1])); // mask_for_mem
-        memEncInputs.push_back(
-            createTensor<float>(m_memoryInfo, embedData, embedShape)
-        );
+        memEncInputs.push_back(createTensor<float>(m_memoryInfo, embedData, embedShape));
 
         auto memEncRes = runMemEncoder(memEncInputs);
         if (memEncRes.index() == 1) {
-            std::cerr << "[ERROR] memEncoder => "
-                      << std::get<std::string>(memEncRes) << "\n";
-            return finalMask;
+            std::cerr << "[ERROR] memEncoder => " << std::get<std::string>(memEncRes) << "\n";
+            return originalImageSizeBinaryMask;
         }
         auto &memEncOuts = std::get<0>(memEncRes);
         if(memEncOuts.size() < 3){
             std::cerr << "[ERROR] memEncOuts <3.\n";
-            return finalMask;
+            return originalImageSizeBinaryMask;
         }
         auto tMem1 = std::chrono::steady_clock::now();
         memEncTimeMs = std::chrono::duration<double, std::milli>(tMem1 - tMem0).count();
@@ -183,7 +162,7 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &originalImage,
                   << "Dec: " << decTimeMs << " ms, "
                   << "MemEnc: " << memEncTimeMs << " ms\n";
 
-        return finalMask;
+        return originalImageSizeBinaryMask;
     }
     else {
         // -----------
@@ -297,45 +276,28 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &originalImage,
 
         // => decOuts[1] = mask_for_mem => [1,1,1024,1024]
         // => decOuts[2] = pred_mask    => [1,N,256,256]
-        cv::Mat finalMask;
-        {
-            float* pm = decOuts[2].GetTensorMutableData<float>();
-            auto pmShape = decOuts[2].GetTensorTypeAndShapeInfo().GetShape();
-            int mh = (int)pmShape[2];
-            int mw = (int)pmShape[3];
-            cv::Mat lowRes(mh, mw, CV_32FC1, (void*)pm);
-            cv::Mat upFloat;
-            cv::resize(lowRes, upFloat, cv::Size(originalImageSize.width, originalImageSize.height), 0, 0, cv::INTER_LINEAR);
-
-            finalMask.create(cv::Size(originalImageSize.width, originalImageSize.height), CV_8UC1);
-            for(int r=0; r<finalMask.rows; r++){
-                const float* rowF = upFloat.ptr<float>(r);
-                uchar* rowB      = finalMask.ptr<uchar>(r);
-                for(int c=0; c<finalMask.cols; c++){
-                    rowB[c] = (rowF[c] > 0.f)?255:0;
-                }
-            }
-        }
+        float* pm = decOuts[2].GetTensorMutableData<float>();
+        auto pmShape = decOuts[2].GetTensorTypeAndShapeInfo().GetShape();
+        int mh = (int)pmShape[2];
+        int mw = (int)pmShape[3];
+        cv::Mat originalImageSizeBinaryMask = createBinaryMask(originalImageSize, Size(mw, mh), pm);
 
         // 4) mem-encode => pass decOuts[1] => mask_for_mem + embedData
         auto tMem0 = std::chrono::steady_clock::now();
         std::vector<Ort::Value> memEncInputs;
         memEncInputs.reserve(2);
         memEncInputs.push_back(std::move(decOuts[1]));
-        memEncInputs.push_back(
-            createTensor<float>(m_memoryInfo, embedData, embedShape)
-        );
+        memEncInputs.push_back(createTensor<float>(m_memoryInfo, embedData, embedShape));
 
         auto memEncRes = runMemEncoder(memEncInputs);
         if(memEncRes.index() == 1){
-            std::cerr << "[ERROR] memEncoder => "
-                      << std::get<std::string>(memEncRes) << "\n";
-            return finalMask;
+            std::cerr << "[ERROR] memEncoder => " << std::get<std::string>(memEncRes) << "\n";
+            return originalImageSizeBinaryMask;
         }
         auto &memEncOuts = std::get<0>(memEncRes);
         if(memEncOuts.size() < 3){
             std::cerr << "[ERROR] memEncOuts <3.\n";
-            return finalMask;
+            return originalImageSizeBinaryMask;
         }
         auto tMem1 = std::chrono::steady_clock::now();
         memEncTimeMs = std::chrono::duration<double,std::milli>(tMem1 - tMem0).count();
@@ -369,6 +331,6 @@ cv::Mat SAM2::InferMultiFrame(const cv::Mat &originalImage,
                   << "Dec: " << decTimeMs << " ms, "
                   << "MemEnc: " << memEncTimeMs << " ms\n";
 
-        return finalMask;
+        return originalImageSizeBinaryMask;
     }
 }
