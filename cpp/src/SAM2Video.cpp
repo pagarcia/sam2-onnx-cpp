@@ -66,9 +66,9 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage,
         auto feats1Shape = encOuts[2].GetTensorTypeAndShapeInfo().GetShape();
 
         // clone them for decode usage
-        size_t embedCount = 1; for(auto d: embedShape)  embedCount  *= (size_t)d;
-        size_t feats0Count=1; for(auto d: feats0Shape) feats0Count *= (size_t)d;
-        size_t feats1Count=1; for(auto d: feats1Shape) feats1Count *= (size_t)d;
+        size_t embedCount = computeElementCount(embedShape);
+        size_t feats0Count = computeElementCount(feats0Shape);
+        size_t feats1Count = computeElementCount(feats1Shape);
 
         std::vector<float> embedData(embedPtr,  embedPtr  + embedCount);
         std::vector<float> feats0Data(feats0Ptr, feats0Ptr+ feats0Count);
@@ -136,21 +136,21 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage,
         {
             float* p = memEncOuts[0].GetTensorMutableData<float>();
             auto shape = memEncOuts[0].GetTensorTypeAndShapeInfo().GetShape();
-            size_t ct=1; for(auto d: shape) ct*= (size_t)d;
+            size_t ct = computeElementCount(shape);
             m_maskMemFeatures.assign(p, p+ct);
             m_maskMemFeaturesShape.assign(shape.begin(), shape.end());
         }
         {
             float* p = memEncOuts[1].GetTensorMutableData<float>();
             auto shape = memEncOuts[1].GetTensorTypeAndShapeInfo().GetShape();
-            size_t ct=1; for(auto d: shape) ct*= (size_t)d;
+            size_t ct = computeElementCount(shape);
             m_maskMemPosEnc.assign(p, p+ct);
             m_maskMemPosEncShape.assign(shape.begin(), shape.end());
         }
         {
             float* p = memEncOuts[2].GetTensorMutableData<float>();
             auto shape = memEncOuts[2].GetTensorTypeAndShapeInfo().GetShape();
-            size_t ct=1; for(auto d: shape) ct*= (size_t)d;
+            size_t ct = computeElementCount(shape);
             m_temporalCode.assign(p, p+ct);
             m_temporalCodeShape.assign(shape.begin(), shape.end());
         }
@@ -199,7 +199,7 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage,
         // Clone image_embed (used later by mem-encoder)
         float* embedPtr = encOuts[0].GetTensorMutableData<float>();
         auto embedShape = encOuts[0].GetTensorTypeAndShapeInfo().GetShape();
-        size_t embedCount=1; for(auto d: embedShape) embedCount *= (size_t)d;
+        size_t embedCount = computeElementCount(embedShape);
         std::vector<float> embedData(embedPtr, embedPtr + embedCount);
 
         // 2) mem-attention => fuse new embed + old memory
@@ -239,8 +239,7 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage,
         // => fused_feat => [1,256,64,64]
         float* fusedData = attnOuts[0].GetTensorMutableData<float>();
         auto fusedShape  = attnOuts[0].GetTensorTypeAndShapeInfo().GetShape();
-        size_t fusedCount = 1; 
-        for(auto d : fusedShape) fusedCount *= (size_t)d;
+        size_t fusedCount = computeElementCount(fusedShape);
         std::vector<float> fusedVec(fusedData, fusedData + fusedCount);
 
         // 3) decode => set prompts => final mask
@@ -306,21 +305,21 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage,
         {
             float* p = memEncOuts[0].GetTensorMutableData<float>();
             auto shape = memEncOuts[0].GetTensorTypeAndShapeInfo().GetShape();
-            size_t ct=1; for(auto d: shape) ct*= (size_t)d;
+            size_t ct = computeElementCount(shape);
             m_maskMemFeatures.assign(p, p+ct);
             m_maskMemFeaturesShape.assign(shape.begin(), shape.end());
         }
         {
             float* p = memEncOuts[1].GetTensorMutableData<float>();
             auto shape = memEncOuts[1].GetTensorTypeAndShapeInfo().GetShape();
-            size_t ct=1; for(auto d: shape) ct*= (size_t)d;
+            size_t ct = computeElementCount(shape);
             m_maskMemPosEnc.assign(p, p+ct);
             m_maskMemPosEncShape.assign(shape.begin(), shape.end());
         }
         {
             float* p = memEncOuts[2].GetTensorMutableData<float>();
             auto shape = memEncOuts[2].GetTensorTypeAndShapeInfo().GetShape();
-            size_t ct=1; for(auto d: shape) ct*= (size_t)d;
+            size_t ct = computeElementCount(shape);
             m_temporalCode.assign(p, p+ct);
             m_temporalCodeShape.assign(shape.begin(), shape.end());
         }

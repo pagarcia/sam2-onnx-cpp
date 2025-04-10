@@ -105,12 +105,15 @@ public:
                              const Size &maskSize, 
                              float *maskData, 
                              float threshold = 0.f);
+    static size_t computeElementCount(const std::vector<int64_t>& shape);
 
     // ORT session config
     static void setupSessionOptions(Ort::SessionOptions &options,
                                     int threadsNumber,
                                     GraphOptimizationLevel optLevel,
                                     const std::string &device);
+
+    static std::vector<Node> getSessionNodes(Ort::Session* session, bool isInput);
 
     // Exposed pipeline-step methods (optional advanced usage):
     std::variant<std::vector<Ort::Value>, std::string> runImageEncoder(const std::vector<Ort::Value> &inputTensors);

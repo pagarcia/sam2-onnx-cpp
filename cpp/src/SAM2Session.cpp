@@ -186,57 +186,11 @@ bool SAM2::initialize(const std::string &encoderPath,
             m_highResFeatures2Shape = out2Info.GetShape();
         }
 
-        // Gather input/output node info for the encoder
-        {
-            Ort::AllocatorWithDefaultOptions alloc;
-            m_imgEncoderInputNodes.clear();
-            size_t inCountEnc = m_imgEncoderSession->GetInputCount();
-            for (size_t i = 0; i < inCountEnc; i++) {
-                Node node;
-                auto inNamePtr = m_imgEncoderSession->GetInputNameAllocated(i, alloc);
-                node.name = std::string(inNamePtr.get());
-                auto shape = m_imgEncoderSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
-                node.dim.assign(shape.begin(), shape.end());
-                m_imgEncoderInputNodes.push_back(std::move(node));
-            }
-
-            m_imgEncoderOutputNodes.clear();
-            size_t outCountEnc = m_imgEncoderSession->GetOutputCount();
-            for (size_t i = 0; i < outCountEnc; i++) {
-                Node node;
-                auto outNamePtr = m_imgEncoderSession->GetOutputNameAllocated(i, alloc);
-                node.name = std::string(outNamePtr.get());
-                auto shape = m_imgEncoderSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
-                node.dim.assign(shape.begin(), shape.end());
-                m_imgEncoderOutputNodes.push_back(std::move(node));
-            }
-        }
-
-        // Gather input/output node info for the decoder
-        {
-            Ort::AllocatorWithDefaultOptions alloc;
-            m_imgDecoderInputNodes.clear();
-            size_t inCountDec = m_imgDecoderSession->GetInputCount();
-            for (size_t i = 0; i < inCountDec; i++) {
-                Node node;
-                auto inNamePtr = m_imgDecoderSession->GetInputNameAllocated(i, alloc);
-                node.name = std::string(inNamePtr.get());
-                auto shape = m_imgDecoderSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
-                node.dim.assign(shape.begin(), shape.end());
-                m_imgDecoderInputNodes.push_back(std::move(node));
-            }
-
-            m_imgDecoderOutputNodes.clear();
-            size_t outCountDec = m_imgDecoderSession->GetOutputCount();
-            for (size_t i = 0; i < outCountDec; i++) {
-                Node node;
-                auto outNamePtr = m_imgDecoderSession->GetOutputNameAllocated(i, alloc);
-                node.name = std::string(outNamePtr.get());
-                auto shape = m_imgDecoderSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
-                node.dim.assign(shape.begin(), shape.end());
-                m_imgDecoderOutputNodes.push_back(std::move(node));
-            }
-        }
+        // Gather node info
+        m_imgEncoderInputNodes  = getSessionNodes(m_imgEncoderSession.get(), true);
+        m_imgEncoderOutputNodes = getSessionNodes(m_imgEncoderSession.get(), false);
+        m_imgDecoderInputNodes  = getSessionNodes(m_imgDecoderSession.get(), true);
+        m_imgDecoderOutputNodes = getSessionNodes(m_imgDecoderSession.get(), false);
 
         std::cout << "[DEBUG] SAM2::initialize() success.\n";
     }
@@ -279,55 +233,11 @@ bool SAM2::initializeVideo(const std::string &encoderPath,
         m_memEncoderSession  = std::make_unique<Ort::Session>(m_memEncoderEnv, memEncoderPath.c_str(), m_memEncoderOptions);
     #endif
 
-        // gather node info for mem_attention
-        {
-            Ort::AllocatorWithDefaultOptions alloc;
-            m_memAttentionInputNodes.clear();
-            size_t inCount= m_memAttentionSession->GetInputCount();
-            for(size_t i=0; i<inCount; i++){
-                Node node;
-                auto inName= m_memAttentionSession->GetInputNameAllocated(i,alloc);
-                node.name= std::string(inName.get());
-                auto shape= m_memAttentionSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
-                node.dim.assign(shape.begin(), shape.end());
-                m_memAttentionInputNodes.push_back(std::move(node));
-            }
-            m_memAttentionOutputNodes.clear();
-            size_t outCount= m_memAttentionSession->GetOutputCount();
-            for(size_t i=0; i<outCount; i++){
-                Node node;
-                auto outName= m_memAttentionSession->GetOutputNameAllocated(i,alloc);
-                node.name= std::string(outName.get());
-                auto shape= m_memAttentionSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
-                node.dim.assign(shape.begin(), shape.end());
-                m_memAttentionOutputNodes.push_back(std::move(node));
-            }
-        }
-
-        // gather node info for mem_encoder
-        {
-            Ort::AllocatorWithDefaultOptions alloc;
-            m_memEncoderInputNodes.clear();
-            size_t inCount= m_memEncoderSession->GetInputCount();
-            for(size_t i=0; i<inCount; i++){
-                Node node;
-                auto inName= m_memEncoderSession->GetInputNameAllocated(i,alloc);
-                node.name= std::string(inName.get());
-                auto shape= m_memEncoderSession->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
-                node.dim.assign(shape.begin(), shape.end());
-                m_memEncoderInputNodes.push_back(std::move(node));
-            }
-            m_memEncoderOutputNodes.clear();
-            size_t outCount= m_memEncoderSession->GetOutputCount();
-            for(size_t i=0; i<outCount; i++){
-                Node node;
-                auto outName= m_memEncoderSession->GetOutputNameAllocated(i,alloc);
-                node.name= std::string(outName.get());
-                auto shape= m_memEncoderSession->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
-                node.dim.assign(shape.begin(), shape.end());
-                m_memEncoderOutputNodes.push_back(std::move(node));
-            }
-        }
+        // Gather node info for memory sessions
+        m_memAttentionInputNodes  = getSessionNodes(m_memAttentionSession.get(), true);
+        m_memAttentionOutputNodes = getSessionNodes(m_memAttentionSession.get(), false);
+        m_memEncoderInputNodes    = getSessionNodes(m_memEncoderSession.get(), true);
+        m_memEncoderOutputNodes   = getSessionNodes(m_memEncoderSession.get(), false);
 
         std::cout<<"[DEBUG] SAM2::initializeVideo() => memAttn+memEnc loaded.\n";
     }
@@ -381,7 +291,7 @@ SAM2::runSession(Ort::Session* session,
 }
 
 // --------------------
-// 4 pipeline-step methods
+// Pipeline-step methods
 // --------------------
 std::variant<std::vector<Ort::Value>, std::string>
 SAM2::runImageEncoder(const std::vector<Ort::Value> &inputTensors)
@@ -421,4 +331,23 @@ SAM2::runMemEncoder(const std::vector<Ort::Value> &inputTensors)
                       m_memEncoderOutputNodes,
                       inputTensors,
                       "memEncoderSession");
+}
+
+
+std::vector<Node> SAM2::getSessionNodes(Ort::Session* session, bool isInput)
+{
+    std::vector<Node> nodes;
+    Ort::AllocatorWithDefaultOptions alloc;
+    size_t count = isInput ? session->GetInputCount() : session->GetOutputCount();
+    for(size_t i = 0; i < count; i++){
+        Node node;
+        auto namePtr = isInput ? session->GetInputNameAllocated(i, alloc)
+                               : session->GetOutputNameAllocated(i, alloc);
+        node.name = std::string(namePtr.get());
+        auto shape = isInput ? session->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape()
+                             : session->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
+        node.dim.assign(shape.begin(), shape.end());
+        nodes.push_back(std::move(node));
+    }
+    return nodes;
 }

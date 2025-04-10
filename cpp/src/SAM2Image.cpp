@@ -72,21 +72,18 @@ bool SAM2::preprocessImage(const cv::Mat &originalImage)
         // store the 3 relevant outputs
         {
             float* p = encOuts[0].GetTensorMutableData<float>();
-            size_t ct = 1;
-            for(auto d : m_outputShapeEncoder) ct *= (size_t)d;
-            m_outputTensorValuesEncoder.assign(p, p+ct);
+            size_t ct = computeElementCount(m_outputShapeEncoder);
+            m_outputTensorValuesEncoder.assign(p, p + ct);
         }
         {
             float* p = encOuts[1].GetTensorMutableData<float>();
-            size_t ct = 1;
-            for(auto d : m_highResFeatures1Shape) ct *= (size_t)d;
-            m_highResFeatures1.assign(p, p+ct);
+            size_t ct = computeElementCount(m_highResFeatures1Shape);
+            m_highResFeatures1.assign(p, p + ct);
         }
         {
             float* p = encOuts[2].GetTensorMutableData<float>();
-            size_t ct = 1;
-            for(auto d : m_highResFeatures2Shape) ct *= (size_t)d;
-            m_highResFeatures2.assign(p, p+ct);
+            size_t ct = computeElementCount(m_highResFeatures2Shape);
+            m_highResFeatures2.assign(p, p + ct);
         }
         return true;
     }
@@ -243,4 +240,11 @@ cv::Mat SAM2::createBinaryMask(const Size &targetSize,
         }
     }
     return binaryMask;
+}
+
+size_t SAM2::computeElementCount(const std::vector<int64_t>& shape) 
+{
+    size_t count = 1;
+    for (auto dim : shape) count *= static_cast<size_t>(dim);
+    return count;
 }
