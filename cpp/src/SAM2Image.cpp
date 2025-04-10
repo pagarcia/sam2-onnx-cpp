@@ -96,7 +96,7 @@ bool SAM2::preprocessImage(const cv::Mat &originalImage)
     }
 }
 
-cv::Mat SAM2::InferSingleFrame(const Size &originalImageSize)
+cv::Mat SAM2::inferSingleFrame(const Size &originalImageSize)
 {
     if(m_promptPointLabels.empty() || m_promptPointCoords.empty()){
         std::cerr << "[WARN] InferSingleFrame => no prompts.\n";

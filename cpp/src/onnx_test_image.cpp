@@ -47,7 +47,7 @@ static void updateDisplay(AppState* state) {
         state->sam.setPrompts(prompts, state->originalImageSize);
 
         auto t0 = high_resolution_clock::now();
-        cv::Mat mask = state->sam.InferSingleFrame(state->originalImageSize);
+        cv::Mat mask = state->sam.inferSingleFrame(state->originalImageSize);
         auto t1 = high_resolution_clock::now();
         auto ms = duration_cast<milliseconds>(t1 - t0).count();
         cout << "[INFO] Segmentation took " << ms << " ms." << endl;

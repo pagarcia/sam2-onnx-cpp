@@ -81,10 +81,10 @@ public:
 
     // For single-frame usage:
     bool preprocessImage(const cv::Mat &originalImage);
-    cv::Mat InferSingleFrame(const Size &originalImageSize);
+    cv::Mat inferSingleFrame(const Size &originalImageSize);
 
     // For multi-frame usage:
-    cv::Mat InferMultiFrame(const cv::Mat &originalImage,
+    cv::Mat inferMultiFrame(const cv::Mat &originalImage,
                             const Prompts &prompts);
 
     // Basic info

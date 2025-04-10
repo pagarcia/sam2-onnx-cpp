@@ -9,7 +9,7 @@
 // --------------------
 // Multi-frame usage
 // --------------------
-cv::Mat SAM2::InferMultiFrame(const cv::Mat &originalImage,
+cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage,
                               const Prompts &prompts)
 {
     if (!m_memAttentionSession || !m_memEncoderSession) {
