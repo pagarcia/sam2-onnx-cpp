@@ -40,6 +40,33 @@ std::vector<float> SAM2::normalizeBGR(const cv::Mat &bgrImg)
 // --------------------
 // Single-frame usage
 // --------------------
+EncoderOutputs SAM2::runEncoderForImage(const cv::Mat &image) {
+    EncoderOutputs results;
+
+    // Assume 'frame' is already resized to the expected SAM2ImageSize.
+    // (If not, you could resize here or let the caller do it.)
+    std::vector<float> encData = normalizeBGR(image);
+
+    // Create an input tensor using the input shape (m_inputShapeEncoder)
+    Ort::Value inTensor = createTensor<float>(m_memoryInfo, encData, m_inputShapeEncoder);
+    std::vector<Ort::Value> encInputs;
+    encInputs.reserve(1);
+    encInputs.push_back(std::move(inTensor));
+
+    auto encRes = runImageEncoder(encInputs);
+    if(encRes.index() == 1) throw std::runtime_error(std::get<std::string>(encRes));
+    results.outputs = std::move(std::get<0>(encRes));
+
+    if(results.outputs.size() < 3) throw std::runtime_error("Encoder returned insufficient outputs.");
+
+    // Extract the first three outputs:
+    extractTensorData<float>(results.outputs[0], results.embedData, results.embedShape);
+    extractTensorData<float>(results.outputs[1], results.feats0Data, results.feats0Shape);
+    extractTensorData<float>(results.outputs[2], results.feats1Data, results.feats1Shape);
+
+    return results;
+}
+
 bool SAM2::preprocessImage(const cv::Mat &originalImage)
 {
     try {
@@ -47,32 +74,16 @@ bool SAM2::preprocessImage(const cv::Mat &originalImage)
         cv::Mat SAM2Image;
         cv::resize(originalImage, SAM2Image, cv::Size(SAM2ImageSize.width, SAM2ImageSize.height));
 
-        // Convert BGR to normalized float
-        std::vector<float> data = normalizeBGR(SAM2Image);
+        // Run the encoder using the helper function.
+        EncoderOutputs encOut = runEncoderForImage(SAM2Image);
 
-        // Create an input tensor
-        Ort::Value inTensor = createTensor<float>(m_memoryInfo, data, m_inputShapeEncoder);
-
-        std::vector<Ort::Value> encInputs;
-        encInputs.reserve(1);
-        encInputs.push_back(std::move(inTensor));
-
-        auto encRes = runImageEncoder(encInputs);
-        if(encRes.index() == 1){
-            std::cerr << "[ERROR] preprocessImage => " << std::get<std::string>(encRes) << "\n";
-            return false;
-        }
-
-        auto &encOuts = std::get<0>(encRes);
-        if(encOuts.size() < 3){
-            std::cerr << "[ERROR] encoder <3 outputs?\n";
-            return false;
-        }
-
-        // store the 3 relevant outputs
-        extractTensorData<float>(encOuts[0], m_outputTensorValuesEncoder, m_outputShapeEncoder);
-        extractTensorData<float>(encOuts[1], m_highResFeatures1, m_highResFeatures1Shape);
-        extractTensorData<float>(encOuts[2], m_highResFeatures2, m_highResFeatures2Shape);
+        // Store the extracted outputs in the appropriate member variables.
+        m_outputTensorValuesEncoder = encOut.embedData;
+        m_outputShapeEncoder = encOut.embedShape;
+        m_highResFeatures1 = encOut.feats0Data;
+        m_highResFeatures1Shape = encOut.feats0Shape;
+        m_highResFeatures2 = encOut.feats1Data;
+        m_highResFeatures2Shape = encOut.feats1Shape;
 
         return true;
     }

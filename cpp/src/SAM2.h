@@ -79,6 +79,16 @@ struct Size {
     Size(int w = 0, int h = 0) : width(w), height(h) {}
 };
 
+struct EncoderOutputs {
+    std::vector<Ort::Value> outputs;  // All raw outputs from runImageEncoder
+    std::vector<float> embedData;
+    std::vector<int64_t> embedShape;
+    std::vector<float> feats0Data;
+    std::vector<int64_t> feats0Shape;
+    std::vector<float> feats1Data;
+    std::vector<int64_t> feats1Shape;
+};
+
 class SAM2 {
 public:
     SAM2();
@@ -99,6 +109,7 @@ public:
                          std::string device = "cpu");
 
     // For single-frame usage:
+    EncoderOutputs runEncoderForImage(const cv::Mat &image);
     bool preprocessImage(const cv::Mat &originalImage);
     cv::Mat inferSingleFrame(const Size &originalImageSize);
 
