@@ -70,21 +70,10 @@ bool SAM2::preprocessImage(const cv::Mat &originalImage)
         }
 
         // store the 3 relevant outputs
-        {
-            float* p = encOuts[0].GetTensorMutableData<float>();
-            size_t ct = computeElementCount(m_outputShapeEncoder);
-            m_outputTensorValuesEncoder.assign(p, p + ct);
-        }
-        {
-            float* p = encOuts[1].GetTensorMutableData<float>();
-            size_t ct = computeElementCount(m_highResFeatures1Shape);
-            m_highResFeatures1.assign(p, p + ct);
-        }
-        {
-            float* p = encOuts[2].GetTensorMutableData<float>();
-            size_t ct = computeElementCount(m_highResFeatures2Shape);
-            m_highResFeatures2.assign(p, p + ct);
-        }
+        extractTensorData<float>(encOuts[0], m_outputTensorValuesEncoder, m_outputShapeEncoder);
+        extractTensorData<float>(encOuts[1], m_highResFeatures1, m_highResFeatures1Shape);
+        extractTensorData<float>(encOuts[2], m_highResFeatures2, m_highResFeatures2Shape);
+
         return true;
     }
     catch(const std::exception &e){

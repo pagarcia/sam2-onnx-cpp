@@ -64,7 +64,7 @@ struct Rect {
 
 struct Prompts {
     std::vector<Point> points;
-    std::vector<int>       pointLabels;
+    std::vector<int>   pointLabels;
     std::vector<Rect>  rects;
 };
 
