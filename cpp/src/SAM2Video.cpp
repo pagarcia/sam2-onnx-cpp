@@ -9,42 +9,6 @@
 // --------------------
 // Multi-frame usage
 // --------------------
-void SAM2::setPrompts(const Prompts &prompts, const Size &originalImageSize)
-{
-    m_promptPointCoords.clear();
-    m_promptPointLabels.clear();
-
-    Size encSize = getInputSize();
-    if(encSize.width <= 0 || encSize.height <= 0){
-        std::cerr << "[WARN] setPrompts => invalid encoder size.\n";
-        return;
-    }
-
-    // Rect => label=2,3
-    for(const auto &rc : prompts.rects){
-        float x1 = rc.x * (float)encSize.width / (float)originalImageSize.width;
-        float y1 = rc.y * (float)encSize.height / (float)originalImageSize.height;
-        m_promptPointCoords.push_back(x1);
-        m_promptPointCoords.push_back(y1);
-        m_promptPointLabels.push_back(2.f);
-
-        float x2 = rc.br().x * (float)encSize.width / (float)originalImageSize.width;
-        float y2 = rc.br().y * (float)encSize.height / (float)originalImageSize.height;
-        m_promptPointCoords.push_back(x2);
-        m_promptPointCoords.push_back(y2);
-        m_promptPointLabels.push_back(3.f);
-    }
-
-    // Points => label=1,0,etc.
-    for(size_t i=0; i<prompts.points.size(); i++){
-        float x = prompts.points[i].x * (float)encSize.width / (float)originalImageSize.width;
-        float y = prompts.points[i].y * (float)encSize.height/ (float)originalImageSize.height;
-        m_promptPointCoords.push_back(x);
-        m_promptPointCoords.push_back(y);
-        m_promptPointLabels.push_back((float)prompts.pointLabels[i]);
-    }
-}
-
 cv::Mat SAM2::InferMultiFrame(const cv::Mat &originalImage,
                               const Prompts &prompts)
 {
