@@ -131,10 +131,11 @@ public:
                          int label,
                          std::vector<float> *inputPointValues,
                          std::vector<float> *inputLabelValues);
-    cv::Mat createBinaryMask(const Size &targetSize, 
-                             const Size &maskSize, 
-                             float *maskData, 
-                             float threshold = 0.f);
+    static cv::Mat createBinaryMask(const Size &targetSize, 
+                                    const Size &maskSize, 
+                                    float *maskData, 
+                                    float threshold = 0.f);
+    static cv::Mat extractAndCreateMask(Ort::Value &maskTensor, const Size &targetSize);
 
     // ORT session config
     static void setupSessionOptions(Ort::SessionOptions &options,

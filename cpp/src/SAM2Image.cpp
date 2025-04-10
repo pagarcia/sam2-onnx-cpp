@@ -130,17 +130,8 @@ cv::Mat SAM2::inferSingleFrame(const Size &originalImageSize)
         return cv::Mat();
     }
     // decOuts[2] => pred_mask => [1,N,256,256]
-    float* pmData = decOuts[2].GetTensorMutableData<float>();
-    auto pmShape  = decOuts[2].GetTensorTypeAndShapeInfo().GetShape();
-    if(pmShape.size() < 4){
-        std::cerr << "[ERROR] pred_mask shape?\n";
-        return cv::Mat();
-    }
-    int maskH = (int)pmShape[2];
-    int maskW = (int)pmShape[3];
-
     // Create a low-resolution floar mask image from the decoder output and convert it to binary uchar mask
-    cv::Mat originalImageSizeBinaryMask = createBinaryMask(originalImageSize, Size(maskW, maskH), pmData);
+    cv::Mat originalImageSizeBinaryMask = extractAndCreateMask(decOuts[2], originalImageSize);
     return originalImageSizeBinaryMask;
 }
 
@@ -239,4 +230,26 @@ cv::Mat SAM2::createBinaryMask(const Size &targetSize,
         }
     }
     return binaryMask;
+}
+
+cv::Mat SAM2::extractAndCreateMask(Ort::Value &maskTensor, const Size &targetSize)
+{
+    // Retrieve the raw float pointer from the tensor.
+    float* maskData = maskTensor.GetTensorMutableData<float>();
+
+    // Get the tensor shape.
+    auto maskShape = maskTensor.GetTensorTypeAndShapeInfo().GetShape();
+
+    // Verify that the shape meets the expected 4 dimensions.
+    if(maskShape.size() < 4){
+        std::cerr << "[ERROR] extractAndCreateMask => unexpected mask shape." << std::endl;
+        return cv::Mat();
+    }
+
+    // Extract the mask dimensions from the shape.
+    int maskH = static_cast<int>(maskShape[2]);
+    int maskW = static_cast<int>(maskShape[3]);
+
+    // Call the existing helper to create a binary mask.
+    return createBinaryMask(targetSize, Size(maskW, maskH), maskData);
 }

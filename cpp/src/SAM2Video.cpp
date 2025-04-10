@@ -73,15 +73,7 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
         decTimeMs = std::chrono::duration<double, std::milli>(tDecEnd - tDecStart).count();
 
         // Build the final binary mask from the decoder output (decOuts[2] is pred_mask).
-        float* pm = decOuts[2].GetTensorMutableData<float>();
-        auto pmShape = decOuts[2].GetTensorTypeAndShapeInfo().GetShape();
-        if (pmShape.size() < 4) {
-            std::cerr << "[ERROR] pred_mask shape?\n";
-            return cv::Mat();
-        }
-        int maskH = static_cast<int>(pmShape[2]);
-        int maskW = static_cast<int>(pmShape[3]);
-        cv::Mat finalMask = createBinaryMask(origSize, Size(maskW, maskH), pm);
+        cv::Mat finalMask = extractAndCreateMask(decOuts[2], origSize);
 
         // Run the memory encoder to build the memory.
         auto tMemStart = std::chrono::steady_clock::now();
@@ -187,11 +179,7 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
         }
 
         // Create final binary mask from decoder output[2].
-        float* pm = decOuts[2].GetTensorMutableData<float>();
-        auto pmShape = decOuts[2].GetTensorTypeAndShapeInfo().GetShape();
-        int maskH = static_cast<int>(pmShape[2]);
-        int maskW = static_cast<int>(pmShape[3]);
-        cv::Mat finalMask = createBinaryMask(origSize, Size(maskW, maskH), pm);
+        cv::Mat finalMask = extractAndCreateMask(decOuts[2], origSize);
 
         // Run memory encoder to update stored memory.
         auto tMemStart = std::chrono::steady_clock::now();
