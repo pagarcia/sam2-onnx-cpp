@@ -40,7 +40,7 @@ std::vector<float> SAM2::normalizeBGR(const cv::Mat &bgrImg)
 // --------------------
 // Single-frame usage
 // --------------------
-EncoderOutputs SAM2::runEncoderForImage(const cv::Mat &originalImage, Size targetImageSize) {
+EncoderOutputs SAM2::getEncoderOutputsFromImage(const cv::Mat &originalImage, Size targetImageSize) {
     EncoderOutputs outputs;
 
     cv::Mat targetImage;
@@ -56,7 +56,7 @@ EncoderOutputs SAM2::runEncoderForImage(const cv::Mat &originalImage, Size targe
     encInputs.reserve(1);
     encInputs.push_back(std::move(inTensor));
 
-    auto encRes = runImageEncoder(encInputs);
+    auto encRes = runImageEncoderSession(encInputs);
     if(encRes.index() == 1) throw std::runtime_error(std::get<std::string>(encRes));
     outputs.outputs = std::move(std::get<0>(encRes));
 
@@ -70,11 +70,39 @@ EncoderOutputs SAM2::runEncoderForImage(const cv::Mat &originalImage, Size targe
     return outputs;
 }
 
+std::vector<Ort::Value> SAM2::prepareDecoderInputs(
+    const std::vector<float>& promptCoords,
+    const std::vector<float>& promptLabels,
+    const std::vector<float>& primaryFeature,
+    const std::vector<int64_t>& primaryFeatureShape,
+    std::vector<Ort::Value> additionalInputs)
+{
+    std::vector<Ort::Value> inputs;
+    // Compute shapes for the prompt inputs.
+    int numPoints = static_cast<int>(promptLabels.size());
+    std::vector<int64_t> shapeCoords = {1, numPoints, 2};
+    std::vector<int64_t> shapeLabels = {1, numPoints};
+    
+    // Create prompt coordinate tensor.
+    inputs.push_back(createTensor<float>(m_memoryInfo, promptCoords, shapeCoords));
+    // Create prompt label tensor.
+    inputs.push_back(createTensor<float>(m_memoryInfo, promptLabels, shapeLabels));
+    // Create primary feature tensor (encoder embed or fused feature).
+    inputs.push_back(createTensor<float>(m_memoryInfo, primaryFeature, primaryFeatureShape));
+    
+    // Instead of a range-for loop, use move iterators to move the additional inputs.
+    inputs.insert(inputs.end(),
+        std::make_move_iterator(additionalInputs.begin()),
+        std::make_move_iterator(additionalInputs.end()));
+
+    return inputs;
+}
+
 bool SAM2::preprocessImage(const cv::Mat &originalImage)
 {
     try {
         Size SAM2ImageSize = getInputSize();
-        EncoderOutputs encOut = runEncoderForImage(originalImage, SAM2ImageSize);
+        EncoderOutputs encOut = getEncoderOutputsFromImage(originalImage, SAM2ImageSize);
 
         // Store the extracted outputs in the appropriate member variables.
         m_outputTensorValuesEncoder = encOut.embedData;
@@ -98,28 +126,24 @@ cv::Mat SAM2::inferSingleFrame(const Size &originalImageSize)
         std::cerr << "[WARN] InferSingleFrame => no prompts.\n";
         return cv::Mat();
     }
-    // Build 5 inputs => decode => upsample => final
-    int numPoints = (int)m_promptPointLabels.size();
-    std::vector<int64_t> shpPoints = {1, numPoints, 2};
-    std::vector<int64_t> shpLabels = {1, numPoints};
 
-    // We'll push_back carefully
-    std::vector<Ort::Value> decInputs;
-    decInputs.reserve(5);
+    // Build additional inputs for feats0 and feats1.
+    std::vector<Ort::Value> additionalInputs;
+    additionalInputs.push_back(std::move(createTensor<float>(m_memoryInfo, m_highResFeatures1, m_highResFeatures1Shape)));
+    additionalInputs.push_back(std::move(createTensor<float>(m_memoryInfo, m_highResFeatures2, m_highResFeatures2Shape)));
 
-    // 0) point_coords
-    decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointCoords, shpPoints));
-    // 1) point_labels
-    decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointLabels, shpLabels));
-    // 2) image_embed
-    decInputs.push_back(createTensor<float>(m_memoryInfo, m_outputTensorValuesEncoder, m_outputShapeEncoder));
-    // 3) feats_0
-    decInputs.push_back(createTensor<float>(m_memoryInfo, m_highResFeatures1, m_highResFeatures1Shape));
-    // 4) feats_1
-    decInputs.push_back(createTensor<float>(m_memoryInfo, m_highResFeatures2, m_highResFeatures2Shape));
+    // Use m_outputTensorValuesEncoder and m_outputShapeEncoder as the primary feature.
+    // The helper builds the point coordinate tensor, point label tensor, and primary feature tensor.
+    std::vector<Ort::Value> decInputs = prepareDecoderInputs(
+        m_promptPointCoords,
+        m_promptPointLabels,
+        m_outputTensorValuesEncoder,
+        m_outputShapeEncoder,
+        std::move(additionalInputs)
+    );
 
     // Run the decoder
-    auto decRes = runImageDecoder(decInputs);
+    auto decRes = runImageDecoderSession(decInputs);
     if(decRes.index() == 1){
         std::cerr << "[ERROR] InferSingleFrame => decode => " << std::get<std::string>(decRes) << "\n";
         return cv::Mat();

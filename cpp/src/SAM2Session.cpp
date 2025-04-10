@@ -294,7 +294,7 @@ SAM2::runSession(Ort::Session* session,
 // Pipeline-step methods
 // --------------------
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2::runImageEncoder(const std::vector<Ort::Value> &inputTensors)
+SAM2::runImageEncoderSession(const std::vector<Ort::Value> &inputTensors)
 {
     return runSession(m_imgEncoderSession.get(),
                       m_imgEncoderInputNodes,
@@ -304,7 +304,7 @@ SAM2::runImageEncoder(const std::vector<Ort::Value> &inputTensors)
 }
 
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2::runImageDecoder(const std::vector<Ort::Value> &inputTensors)
+SAM2::runImageDecoderSession(const std::vector<Ort::Value> &inputTensors)
 {
     return runSession(m_imgDecoderSession.get(),
                       m_imgDecoderInputNodes,
@@ -314,7 +314,7 @@ SAM2::runImageDecoder(const std::vector<Ort::Value> &inputTensors)
 }
 
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2::runMemAttention(const std::vector<Ort::Value> &inputTensors)
+SAM2::runMemAttentionSession(const std::vector<Ort::Value> &inputTensors)
 {
     return runSession(m_memAttentionSession.get(),
                       m_memAttentionInputNodes,
@@ -324,7 +324,7 @@ SAM2::runMemAttention(const std::vector<Ort::Value> &inputTensors)
 }
 
 std::variant<std::vector<Ort::Value>, std::string>
-SAM2::runMemEncoder(const std::vector<Ort::Value> &inputTensors)
+SAM2::runMemEncoderSession(const std::vector<Ort::Value> &inputTensors)
 {
     return runSession(m_memEncoderSession.get(),
                       m_memEncoderInputNodes,

@@ -28,7 +28,7 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
     {
         auto tEncStart = std::chrono::steady_clock::now();
         try {
-            encOutN = runEncoderForImage(originalImage, SAM2Size);
+            encOutN = getEncoderOutputsFromImage(originalImage, SAM2Size);
         } catch (const std::exception &e) {
             std::cerr << "[ERROR] Encoder failed: " << e.what() << "\n";
             return cv::Mat();
@@ -45,21 +45,23 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
         // ---------- Frame 0: No memory has been set yet ----------
         std::cout << "[INFO] InferMultiFrame => no memory => frame0.\n";
 
-        // Prepare decoder input tensors.
-        int nPts = static_cast<int>(m_promptPointLabels.size());
-        std::vector<int64_t> shpPts = {1, nPts, 2};
-        std::vector<int64_t> shpLbl = {1, nPts};
-        std::vector<Ort::Value> decInputs;
-        decInputs.reserve(5);
-        decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointCoords, shpPts));
-        decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointLabels, shpLbl));
-        decInputs.push_back(createTensor<float>(m_memoryInfo, encOutN.embedData, encOutN.embedShape));
-        decInputs.push_back(createTensor<float>(m_memoryInfo, encOutN.feats0Data, encOutN.feats0Shape));
-        decInputs.push_back(createTensor<float>(m_memoryInfo, encOutN.feats1Data, encOutN.feats1Shape));
+        // For frame0: create additional inputs for feats0 and feats1.
+        std::vector<Ort::Value> additionalInputsFrame0;
+        additionalInputsFrame0.push_back(std::move(createTensor<float>(m_memoryInfo, encOutN.feats0Data, encOutN.feats0Shape)));
+        additionalInputsFrame0.push_back(std::move(createTensor<float>(m_memoryInfo, encOutN.feats1Data, encOutN.feats1Shape)));
+
+        // Now call the helper; here primary feature is the encoder embed.
+        std::vector<Ort::Value> decInputs = prepareDecoderInputs(
+            m_promptPointCoords,
+            m_promptPointLabels,
+            encOutN.embedData,      // primary feature for frame0
+            encOutN.embedShape,
+            std::move(additionalInputsFrame0)  // additional inputs (feats0 and feats1)
+        );
 
         // Run the decoder.
         auto tDecStart = std::chrono::steady_clock::now();
-        auto decRes = runImageDecoder(decInputs);
+        auto decRes = runImageDecoderSession(decInputs);
         if (decRes.index() == 1) {
             std::cerr << "[ERROR] decode => " << std::get<std::string>(decRes) << "\n";
             return cv::Mat();
@@ -82,7 +84,7 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
         // Use decOuts[1] as "mask_for_mem" plus the encoder embed data.
         memEncInputs.push_back(std::move(decOuts[1]));
         memEncInputs.push_back(createTensor<float>(m_memoryInfo, encOutN.embedData, encOutN.embedShape));
-        auto memEncRes = runMemEncoder(memEncInputs);
+        auto memEncRes = runMemEncoderSession(memEncInputs);
         if (memEncRes.index() == 1) {
             std::cerr << "[ERROR] memEncoder => " << std::get<std::string>(memEncRes) << "\n";
             return finalMask;
@@ -129,7 +131,7 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
         memAttnInputs.push_back(createTensor<float>(m_memoryInfo, m_maskMemPosEnc, m_maskMemPosEncShape));
 
         auto tAttnStart = std::chrono::steady_clock::now();
-        auto attnRes = runMemAttention(memAttnInputs);
+        auto attnRes = runMemAttentionSession(memAttnInputs);
         if (attnRes.index() == 1) {
             std::cerr << "[ERROR] memAttn => " << std::get<std::string>(attnRes) << "\n";
             return cv::Mat();
@@ -150,21 +152,22 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
         size_t fusedCount = computeElementCount(fusedShape);
         std::vector<float> fusedVec(fusedData, fusedData + fusedCount);
 
-        int nPts = static_cast<int>(m_promptPointLabels.size());
-        std::vector<int64_t> shpPts = {1, nPts, 2};
-        std::vector<int64_t> shpLbl = {1, nPts};
+        std::vector<Ort::Value> additionalInputsFrameN;
+        // For frameN, the remaining inputs are provided directly (without re-wrapping them via createTensor).
+        additionalInputsFrameN.push_back(std::move(encOutN.outputs[1]));
+        additionalInputsFrameN.push_back(std::move(encOutN.outputs[2]));
 
-        std::vector<Ort::Value> decInputs;
-        decInputs.reserve(5);
-        decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointCoords, shpPts));
-        decInputs.push_back(createTensor<float>(m_memoryInfo, m_promptPointLabels, shpLbl));
-        decInputs.push_back(createTensor<float>(m_memoryInfo, fusedVec, fusedShape));
-        // Use decoder inputs from the encoder’s raw outputs (outputs[1] and outputs[2]).
-        decInputs.push_back(std::move(encOutN.outputs[1]));
-        decInputs.push_back(std::move(encOutN.outputs[2]));
+        // Now call the helper; here primary feature is the fused feature.
+        std::vector<Ort::Value> decInputs = prepareDecoderInputs(
+            m_promptPointCoords,
+            m_promptPointLabels,
+            fusedVec,         // primary feature for frameN (fused feature)
+            fusedShape,
+            std::move(additionalInputsFrameN)  // additional inputs (moved values from encoder outputs)
+        );
 
         auto tDecStart = std::chrono::steady_clock::now();
-        auto decRes = runImageDecoder(decInputs);
+        auto decRes = runImageDecoderSession(decInputs);
         if (decRes.index() == 1) {
             std::cerr << "[ERROR] decode => " << std::get<std::string>(decRes) << "\n";
             return cv::Mat();
@@ -188,7 +191,7 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
         // Use decoder output[1] (mask_for_mem) and the encoder embed data.
         memEncInputs.push_back(std::move(decOuts[1]));
         memEncInputs.push_back(createTensor<float>(m_memoryInfo, encOutN.embedData, encOutN.embedShape));
-        auto memEncRes = runMemEncoder(memEncInputs);
+        auto memEncRes = runMemEncoderSession(memEncInputs);
         if (memEncRes.index() == 1) {
             std::cerr << "[ERROR] memEncoder => " << std::get<std::string>(memEncRes) << "\n";
             return finalMask;

@@ -109,7 +109,18 @@ public:
                          std::string device = "cpu");
 
     // For single-frame usage:
-    EncoderOutputs runEncoderForImage(const cv::Mat &originalImage, Size targetImageSize);
+    EncoderOutputs getEncoderOutputsFromImage(const cv::Mat &originalImage, Size targetImageSize);
+    // General helper to prepare decoder inputs.
+    // 'primaryFeature' and its shape can be either the encoder embed (frame0)
+    // or the fused feature (frameN). 'additionalInputs' allows caller to
+    // pass any extra tensors that should come after the first three.
+    std::vector<Ort::Value> prepareDecoderInputs(
+        const std::vector<float>& promptCoords,
+        const std::vector<float>& promptLabels,
+        const std::vector<float>& primaryFeature,
+        const std::vector<int64_t>& primaryFeatureShape,
+        std::vector<Ort::Value> additionalInputs = std::vector<Ort::Value>());
+
     bool preprocessImage(const cv::Mat &originalImage);
     cv::Mat inferSingleFrame(const Size &originalImageSize);
 
@@ -133,7 +144,7 @@ public:
                          std::vector<float> *inputLabelValues);
     static cv::Mat createBinaryMask(const Size &targetSize, 
                                     const Size &maskSize, 
-                                    float *maskData, 
+                                    float *maskData,
                                     float threshold = 0.f);
     static cv::Mat extractAndCreateMask(Ort::Value &maskTensor, const Size &targetSize);
 
@@ -146,10 +157,10 @@ public:
     static std::vector<Node> getSessionNodes(Ort::Session* session, bool isInput);
 
     // Exposed pipeline-step methods (optional advanced usage):
-    std::variant<std::vector<Ort::Value>, std::string> runImageEncoder(const std::vector<Ort::Value> &inputTensors);
-    std::variant<std::vector<Ort::Value>, std::string> runImageDecoder(const std::vector<Ort::Value> &inputTensors);
-    std::variant<std::vector<Ort::Value>, std::string> runMemAttention(const std::vector<Ort::Value> &inputTensors);
-    std::variant<std::vector<Ort::Value>, std::string> runMemEncoder(const std::vector<Ort::Value> &inputTensors);
+    std::variant<std::vector<Ort::Value>, std::string> runImageEncoderSession(const std::vector<Ort::Value> &inputTensors);
+    std::variant<std::vector<Ort::Value>, std::string> runImageDecoderSession(const std::vector<Ort::Value> &inputTensors);
+    std::variant<std::vector<Ort::Value>, std::string> runMemAttentionSession(const std::vector<Ort::Value> &inputTensors);
+    std::variant<std::vector<Ort::Value>, std::string> runMemEncoderSession(const std::vector<Ort::Value> &inputTensors);
 
 private:
     bool clearSessions();
