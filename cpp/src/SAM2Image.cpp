@@ -40,12 +40,15 @@ std::vector<float> SAM2::normalizeBGR(const cv::Mat &bgrImg)
 // --------------------
 // Single-frame usage
 // --------------------
-EncoderOutputs SAM2::runEncoderForImage(const cv::Mat &image) {
-    EncoderOutputs results;
+EncoderOutputs SAM2::runEncoderForImage(const cv::Mat &originalImage, Size targetImageSize) {
+    EncoderOutputs outputs;
+
+    cv::Mat targetImage;
+    cv::resize(originalImage, targetImage, cv::Size(targetImageSize.width, targetImageSize.height));
 
     // Assume 'frame' is already resized to the expected SAM2ImageSize.
     // (If not, you could resize here or let the caller do it.)
-    std::vector<float> encData = normalizeBGR(image);
+    std::vector<float> encData = normalizeBGR(targetImage);
 
     // Create an input tensor using the input shape (m_inputShapeEncoder)
     Ort::Value inTensor = createTensor<float>(m_memoryInfo, encData, m_inputShapeEncoder);
@@ -55,27 +58,23 @@ EncoderOutputs SAM2::runEncoderForImage(const cv::Mat &image) {
 
     auto encRes = runImageEncoder(encInputs);
     if(encRes.index() == 1) throw std::runtime_error(std::get<std::string>(encRes));
-    results.outputs = std::move(std::get<0>(encRes));
+    outputs.outputs = std::move(std::get<0>(encRes));
 
-    if(results.outputs.size() < 3) throw std::runtime_error("Encoder returned insufficient outputs.");
+    if(outputs.outputs.size() < 3) throw std::runtime_error("Encoder returned insufficient outputs.");
 
     // Extract the first three outputs:
-    extractTensorData<float>(results.outputs[0], results.embedData, results.embedShape);
-    extractTensorData<float>(results.outputs[1], results.feats0Data, results.feats0Shape);
-    extractTensorData<float>(results.outputs[2], results.feats1Data, results.feats1Shape);
+    extractTensorData<float>(outputs.outputs[0], outputs.embedData, outputs.embedShape);
+    extractTensorData<float>(outputs.outputs[1], outputs.feats0Data, outputs.feats0Shape);
+    extractTensorData<float>(outputs.outputs[2], outputs.feats1Data, outputs.feats1Shape);
 
-    return results;
+    return outputs;
 }
 
 bool SAM2::preprocessImage(const cv::Mat &originalImage)
 {
     try {
         Size SAM2ImageSize = getInputSize();
-        cv::Mat SAM2Image;
-        cv::resize(originalImage, SAM2Image, cv::Size(SAM2ImageSize.width, SAM2ImageSize.height));
-
-        // Run the encoder using the helper function.
-        EncoderOutputs encOut = runEncoderForImage(SAM2Image);
+        EncoderOutputs encOut = runEncoderForImage(originalImage, SAM2ImageSize);
 
         // Store the extracted outputs in the appropriate member variables.
         m_outputTensorValuesEncoder = encOut.embedData;

@@ -109,7 +109,7 @@ public:
                          std::string device = "cpu");
 
     // For single-frame usage:
-    EncoderOutputs runEncoderForImage(const cv::Mat &image);
+    EncoderOutputs runEncoderForImage(const cv::Mat &originalImage, Size targetImageSize);
     bool preprocessImage(const cv::Mat &originalImage);
     cv::Mat inferSingleFrame(const Size &originalImageSize);
 

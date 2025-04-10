@@ -23,16 +23,12 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
     Size origSize(originalImage.cols, originalImage.rows);
     Size SAM2Size = getInputSize();
 
-    // Resize the original frame to the input size expected by SAM2.
-    cv::Mat resizedImage;
-    cv::resize(originalImage, resizedImage, cv::Size(SAM2Size.width, SAM2Size.height));
-
     // Run the encoder for the current frame.
     EncoderOutputs encOutN;
     {
         auto tEncStart = std::chrono::steady_clock::now();
         try {
-            encOutN = runEncoderForImage(resizedImage);
+            encOutN = runEncoderForImage(originalImage, SAM2Size);
         } catch (const std::exception &e) {
             std::cerr << "[ERROR] Encoder failed: " << e.what() << "\n";
             return cv::Mat();
