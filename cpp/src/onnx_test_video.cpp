@@ -36,11 +36,10 @@ struct VideoAppState {
     cv::Mat firstFrame;           // Original BGR from the first frame
     cv::Mat displayFrame;         // Display with partial overlay
     Size originalSize;        // e.g. 960×540
-    Size inputSize;           // e.g. 1024×1024 (model input)
 
     // The user-chosen seeds in original coords
     std::vector<Point> points;
-    std::vector<int>       labels; // 1=FG, 0=BG
+    std::vector<int> labels; // 1=FG, 0=BG
 };
 
 // Overlays a binary mask in green
@@ -271,13 +270,6 @@ int runOnnxTestVideo(int argc, char** argv)
     firstFrameBGR.copyTo(st.firstFrame);
     st.originalSize.width = st.firstFrame.size().width;
     st.originalSize.height = st.firstFrame.size().height;
-
-    // The "inputSize" is e.g. 1024×1024
-    st.inputSize = sam.getInputSize();
-    if(st.inputSize.width<=0 || st.inputSize.height<=0){
-        std::cerr<<"[ERROR] Invalid input size from sam.\n";
-        return 1;
-    }
 
     // Preprocess the first frame => single-frame usage
     auto preT0=std::chrono::steady_clock::now();

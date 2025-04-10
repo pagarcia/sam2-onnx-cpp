@@ -17,7 +17,6 @@ struct AppState {
     cv::Mat originalImage;
     cv::Mat displayImage;
     Size originalImageSize;   // original image size
-    Size SAM2ImageSize;   // e.g. 1024x1024
 
     // Instead of storing scaled points, store them in original coords
     vector<Point> clickedPoints;
@@ -216,14 +215,7 @@ int runOnnxTestImage(int argc, char** argv)
     if(usedGPU) cout << "[INFO] *** GPU inference is in use ***\n\n";
     else        cout << "[INFO] *** CPU inference is in use ***\n\n";
 
-    // 6) Resize to match the encoder input (e.g. 1024x1024)
-    state.SAM2ImageSize = state.sam.getInputSize();
-    if (state.SAM2ImageSize.width <= 0 || state.SAM2ImageSize.height <= 0) {
-        cerr << "[ERROR] Invalid model input size.\n";
-        return -1;
-    }
-
-    // 7) Preprocess => runs the "ImageEncoder"
+    // 6) Preprocess => runs the "ImageEncoder"
     auto preStart = high_resolution_clock::now();
     if (!state.sam.preprocessImage(state.originalImage)) {
         cerr << "[ERROR] preprocessImage failed.\n";
@@ -233,7 +225,7 @@ int runOnnxTestImage(int argc, char** argv)
     auto preMs = duration_cast<milliseconds>(preEnd - preStart).count();
     cout << "[INFO] preprocessImage (encoding) took " << preMs << " ms.\n\n";
 
-    // 8) Interactive segmentation
+    // 7) Interactive segmentation
     state.originalImage.copyTo(state.displayImage);
     cv::namedWindow("Interactive Segmentation");
     cv::imshow("Interactive Segmentation", state.displayImage);
