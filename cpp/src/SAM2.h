@@ -14,10 +14,17 @@
 #include <string>
 #include <variant>
 
+inline size_t computeElementCount(const std::vector<int64_t>& shape) 
+{
+    size_t count = 1;
+    for (auto dim : shape) count *= static_cast<size_t>(dim);
+    return count;
+}
+
 template <typename T>
-Ort::Value createTensor(const Ort::MemoryInfo &memoryInfo,
-                        const std::vector<T> &data,
-                        const std::vector<int64_t> &shape)
+inline Ort::Value createTensor(const Ort::MemoryInfo &memoryInfo,
+                               const std::vector<T> &data,
+                               const std::vector<int64_t> &shape)
 {
     return Ort::Value::CreateTensor<T>(
         memoryInfo,
@@ -26,6 +33,18 @@ Ort::Value createTensor(const Ort::MemoryInfo &memoryInfo,
         shape.data(),
         shape.size()
     );
+}
+
+template <typename T>
+inline void extractTensorData(Ort::Value &tensor,
+                              std::vector<T> &dataOut,
+                              std::vector<int64_t> &shapeOut)
+{
+    T* p = tensor.GetTensorMutableData<T>();
+    auto shape = tensor.GetTensorTypeAndShapeInfo().GetShape();
+    size_t count = computeElementCount(shape);
+    dataOut.assign(p, p + count);
+    shapeOut.assign(shape.begin(), shape.end());
 }
 
 struct Point {
@@ -105,7 +124,6 @@ public:
                              const Size &maskSize, 
                              float *maskData, 
                              float threshold = 0.f);
-    static size_t computeElementCount(const std::vector<int64_t>& shape);
 
     // ORT session config
     static void setupSessionOptions(Ort::SessionOptions &options,

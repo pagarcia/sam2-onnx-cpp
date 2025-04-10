@@ -241,10 +241,3 @@ cv::Mat SAM2::createBinaryMask(const Size &targetSize,
     }
     return binaryMask;
 }
-
-size_t SAM2::computeElementCount(const std::vector<int64_t>& shape) 
-{
-    size_t count = 1;
-    for (auto dim : shape) count *= static_cast<size_t>(dim);
-    return count;
-}

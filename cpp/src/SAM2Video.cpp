@@ -133,27 +133,9 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage,
         memEncTimeMs = std::chrono::duration<double, std::milli>(tMem1 - tMem0).count();
 
         // store memory
-        {
-            float* p = memEncOuts[0].GetTensorMutableData<float>();
-            auto shape = memEncOuts[0].GetTensorTypeAndShapeInfo().GetShape();
-            size_t ct = computeElementCount(shape);
-            m_maskMemFeatures.assign(p, p+ct);
-            m_maskMemFeaturesShape.assign(shape.begin(), shape.end());
-        }
-        {
-            float* p = memEncOuts[1].GetTensorMutableData<float>();
-            auto shape = memEncOuts[1].GetTensorTypeAndShapeInfo().GetShape();
-            size_t ct = computeElementCount(shape);
-            m_maskMemPosEnc.assign(p, p+ct);
-            m_maskMemPosEncShape.assign(shape.begin(), shape.end());
-        }
-        {
-            float* p = memEncOuts[2].GetTensorMutableData<float>();
-            auto shape = memEncOuts[2].GetTensorTypeAndShapeInfo().GetShape();
-            size_t ct = computeElementCount(shape);
-            m_temporalCode.assign(p, p+ct);
-            m_temporalCodeShape.assign(shape.begin(), shape.end());
-        }
+        extractTensorData<float>(memEncOuts[0], m_maskMemFeatures, m_maskMemFeaturesShape);
+        extractTensorData<float>(memEncOuts[1], m_maskMemPosEnc, m_maskMemPosEncShape);
+        extractTensorData<float>(memEncOuts[2], m_temporalCode, m_temporalCodeShape);
 
         m_hasMemory = true;
 
@@ -302,27 +284,9 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage,
         memEncTimeMs = std::chrono::duration<double,std::milli>(tMem1 - tMem0).count();
 
         // store memory
-        {
-            float* p = memEncOuts[0].GetTensorMutableData<float>();
-            auto shape = memEncOuts[0].GetTensorTypeAndShapeInfo().GetShape();
-            size_t ct = computeElementCount(shape);
-            m_maskMemFeatures.assign(p, p+ct);
-            m_maskMemFeaturesShape.assign(shape.begin(), shape.end());
-        }
-        {
-            float* p = memEncOuts[1].GetTensorMutableData<float>();
-            auto shape = memEncOuts[1].GetTensorTypeAndShapeInfo().GetShape();
-            size_t ct = computeElementCount(shape);
-            m_maskMemPosEnc.assign(p, p+ct);
-            m_maskMemPosEncShape.assign(shape.begin(), shape.end());
-        }
-        {
-            float* p = memEncOuts[2].GetTensorMutableData<float>();
-            auto shape = memEncOuts[2].GetTensorTypeAndShapeInfo().GetShape();
-            size_t ct = computeElementCount(shape);
-            m_temporalCode.assign(p, p+ct);
-            m_temporalCodeShape.assign(shape.begin(), shape.end());
-        }
+        extractTensorData<float>(memEncOuts[0], m_maskMemFeatures, m_maskMemFeaturesShape);
+        extractTensorData<float>(memEncOuts[1], m_maskMemPosEnc, m_maskMemPosEncShape);
+        extractTensorData<float>(memEncOuts[2], m_temporalCode, m_temporalCodeShape);
 
         std::cout << "[INFO] FrameN times => "
                   << "Enc: " << encTimeMs << " ms, "
