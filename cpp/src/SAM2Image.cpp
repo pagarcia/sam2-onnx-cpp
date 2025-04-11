@@ -206,15 +206,10 @@ Image<float> SAM2::createBinaryMask(const Size &targetSize,
                                     float *maskData, 
                                     float threshold)
 {
-    // Compute the total number of pixels in the low-resolution mask.
-    size_t totalPixels = static_cast<size_t>(maskSize.width * maskSize.height);
-    
-    // Copy the raw mask data into a vector.
-    std::vector<float> lowResData(maskData, maskData + totalPixels);
-    
-    // Create an Image<float> using the low-resolution data.
-    // We assume the mask is single-channel.
-    Image<float> lowResImg(maskSize.width, maskSize.height, 1, lowResData);
+    // Instead of constructing a temporary vector, 
+    // create an Image<float> for the low-res mask directly.
+    Image<float> lowResImg(maskSize.width, maskSize.height, 1);
+    std::memcpy(lowResImg.getData().data(), maskData, sizeof(float) * maskSize.width * maskSize.height);
     
     // Resize the low-resolution image to the target size using our custom resize method.
     Image<float> resizedImg = lowResImg.resize(targetSize.width, targetSize.height);
@@ -222,14 +217,14 @@ Image<float> SAM2::createBinaryMask(const Size &targetSize,
     // Create a new Image<float> for the binary mask (single channel).
     Image<float> binaryMask(targetSize.width, targetSize.height, 1);
     
-    // Apply thresholding: If a pixel's value is greater than the threshold, set the binary pixel to 1.0; else set it to 0.0.
+    // Apply thresholding: if a pixel's value is greater than the threshold,
+    // set the corresponding binary pixel to 1.0; otherwise set it to 0.0.
     for (int y = 0; y < binaryMask.getHeight(); ++y) {
         for (int x = 0; x < binaryMask.getWidth(); ++x) {
             float val = resizedImg.at(x, y);
             binaryMask.at(x, y) = (val > threshold) ? 1.0f : 0.0f;
         }
     }
-    
     return binaryMask;
 }
 
