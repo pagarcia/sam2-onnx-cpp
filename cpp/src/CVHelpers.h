@@ -59,10 +59,22 @@ cv::Mat imageToCvMat(const Image<T> &img) {
     return mat;
 }
 
+template <typename T>
+cv::Mat imageToCvMatWithType(const Image<T>& img, int targetType = CV_8UC1, double scaleFactor = 255.0) 
+{
+    cv::Mat mat = imageToCvMat(img);
+    // Prepare the output cv::Mat.
+    cv::Mat converted;
+    // Use cv::Mat::convertTo to change the type with scaling.
+    mat.convertTo(converted, targetType, scaleFactor);
+    return converted;
+}
+
 // Normalize a BGR cv::Mat to a float vector in R, G, B order.
 // The input cv::Mat is expected to be an 8-bit, 3-channel image (CV_8UC3).
 // This function returns a vector of floats with normalized values.
 inline Image<float> normalizeRGB(const cv::Mat &bgrImg,
+                                 float scaleFactor = 255.f,
                                  float meanR = 0.485f,
                                  float meanG = 0.456f,
                                  float meanB = 0.406f,
@@ -88,9 +100,9 @@ inline Image<float> normalizeRGB(const cv::Mat &bgrImg,
             // By default, OpenCV stores 8-bit color images in BGR order
             // So the first element is blue, the second green, and the third red
             // Convert channels to float in [0,1].
-            float bVal = pixel[0] / 255.f;
-            float gVal = pixel[1] / 255.f;
-            float rVal = pixel[2] / 255.f;
+            float bVal = pixel[0] / scaleFactor;
+            float gVal = pixel[1] / scaleFactor;
+            float rVal = pixel[2] / scaleFactor;
             
             // Store in interleaved order as R, G, B.
             img.at(c, r, 0) = (rVal - meanR) / stdR;

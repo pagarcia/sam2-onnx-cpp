@@ -10,13 +10,10 @@
 // --------------------
 // Single-frame usage
 // --------------------
-EncoderOutputs SAM2::getEncoderOutputsFromImage(const cv::Mat &originalImage, Size targetImageSize) {
+EncoderOutputs SAM2::getEncoderOutputsFromImage(const Image<float> &originalImage, Size targetImageSize) {
     EncoderOutputs outputs;
-
-    Image<float> normalizedImage = CVHelpers::normalizeRGB(originalImage);
     
-    // Now, resize our custom Image<float> to the target dimensions using our built-in method.
-    Image<float> resizedImage = normalizedImage.resize(targetImageSize.width, targetImageSize.height);
+    Image<float> resizedImage = originalImage.resize(targetImageSize.width, targetImageSize.height);
     
     // Extract image in planar format (all r values first, then g values then b values)
     // SAM2 apparently needs them in this order
@@ -44,7 +41,6 @@ EncoderOutputs SAM2::getEncoderOutputsFromImage(const cv::Mat &originalImage, Si
 
     return outputs;
 }
-
 
 std::vector<Ort::Value> SAM2::prepareDecoderInputs(
     const std::vector<float>& promptCoords,
@@ -74,7 +70,7 @@ std::vector<Ort::Value> SAM2::prepareDecoderInputs(
     return inputs;
 }
 
-bool SAM2::preprocessImage(const cv::Mat &originalImage)
+bool SAM2::preprocessImage(const Image<float> &originalImage)
 {
     try {
         Size SAM2ImageSize = getInputSize();
@@ -96,11 +92,11 @@ bool SAM2::preprocessImage(const cv::Mat &originalImage)
     }
 }
 
-cv::Mat SAM2::inferSingleFrame(const Size &originalImageSize)
+Image<float> SAM2::inferSingleFrame(const Size &originalImageSize)
 {
     if(m_promptPointLabels.empty() || m_promptPointCoords.empty()){
         std::cerr << "[WARN] InferSingleFrame => no prompts.\n";
-        return cv::Mat();
+        return Image<float>();
     }
 
     // Build additional inputs for feats0 and feats1.
@@ -122,16 +118,16 @@ cv::Mat SAM2::inferSingleFrame(const Size &originalImageSize)
     auto decRes = runImageDecoderSession(decInputs);
     if(decRes.index() == 1){
         std::cerr << "[ERROR] InferSingleFrame => decode => " << std::get<std::string>(decRes) << "\n";
-        return cv::Mat();
+        return Image<float>();
     }
     auto &decOuts = std::get<0>(decRes);
     if(decOuts.size() < 3){
         std::cerr << "[ERROR] decode returned <3 outputs.\n";
-        return cv::Mat();
+        return Image<float>();
     }
     // decOuts[2] => pred_mask => [1,N,256,256]
     // Create a low-resolution floar mask image from the decoder output and convert it to binary uchar mask
-    cv::Mat originalImageSizeBinaryMask = extractAndCreateMask(decOuts[2], originalImageSize);
+    Image<float> originalImageSizeBinaryMask = extractAndCreateMask(decOuts[2], originalImageSize);
     return originalImageSizeBinaryMask;
 }
 
@@ -205,34 +201,39 @@ void SAM2::setPointsLabels(const std::list<Point> &points,
     }
 }
 
-cv::Mat SAM2::createBinaryMask(const Size &targetSize, 
-                               const Size &maskSize, 
-                               float *maskData, 
-                               float threshold)
+Image<float> SAM2::createBinaryMask(const Size &targetSize, 
+                                    const Size &maskSize, 
+                                    float *maskData, 
+                                    float threshold)
 {
-    // Create a low-resolution float mask from the raw data.
-    cv::Mat lowResFloatMask(maskSize.height, maskSize.width, CV_32FC1, static_cast<void*>(maskData));
+    // Compute the total number of pixels in the low-resolution mask.
+    size_t totalPixels = static_cast<size_t>(maskSize.width * maskSize.height);
     
-    // Resize to the target size (convert from SAM2::Size to cv::Size).
-    cv::Mat resizedFloatMask;
-    cv::resize(lowResFloatMask, resizedFloatMask,
-               cv::Size(targetSize.width, targetSize.height), 0, 0, cv::INTER_LINEAR);
+    // Copy the raw mask data into a vector.
+    std::vector<float> lowResData(maskData, maskData + totalPixels);
     
-    // Create a binary mask with the target size.
-    cv::Mat binaryMask(cv::Size(targetSize.width, targetSize.height), CV_8UC1, cv::Scalar(0));
+    // Create an Image<float> using the low-resolution data.
+    // We assume the mask is single-channel.
+    Image<float> lowResImg(maskSize.width, maskSize.height, 1, lowResData);
     
-    // Manual loop to convert the upscaled float mask to a binary mask.
-    for (int r = 0; r < binaryMask.rows; ++r) {
-        const float* srcRow = resizedFloatMask.ptr<float>(r);
-        uchar* dstRow = binaryMask.ptr<uchar>(r);
-        for (int c = 0; c < binaryMask.cols; ++c) {
-            dstRow[c] = (srcRow[c] > threshold) ? 255 : 0;
+    // Resize the low-resolution image to the target size using our custom resize method.
+    Image<float> resizedImg = lowResImg.resize(targetSize.width, targetSize.height);
+    
+    // Create a new Image<float> for the binary mask (single channel).
+    Image<float> binaryMask(targetSize.width, targetSize.height, 1);
+    
+    // Apply thresholding: If a pixel's value is greater than the threshold, set the binary pixel to 1.0; else set it to 0.0.
+    for (int y = 0; y < binaryMask.getHeight(); ++y) {
+        for (int x = 0; x < binaryMask.getWidth(); ++x) {
+            float val = resizedImg.at(x, y);
+            binaryMask.at(x, y) = (val > threshold) ? 1.0f : 0.0f;
         }
     }
+    
     return binaryMask;
 }
 
-cv::Mat SAM2::extractAndCreateMask(Ort::Value &maskTensor, const Size &targetSize)
+Image<float> SAM2::extractAndCreateMask(Ort::Value &maskTensor, const Size &targetSize)
 {
     // Retrieve the raw float pointer from the tensor.
     float* maskData = maskTensor.GetTensorMutableData<float>();
@@ -243,7 +244,7 @@ cv::Mat SAM2::extractAndCreateMask(Ort::Value &maskTensor, const Size &targetSiz
     // Verify that the shape meets the expected 4 dimensions.
     if(maskShape.size() < 4){
         std::cerr << "[ERROR] extractAndCreateMask => unexpected mask shape." << std::endl;
-        return cv::Mat();
+        return Image<float>();
     }
 
     // Extract the mask dimensions from the shape.

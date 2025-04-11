@@ -6,13 +6,13 @@
 #ifdef __APPLE__
 #include <coreml_provider_factory.h>
 #endif
-#include <opencv2/core.hpp>
 #include <list>
 #include <fstream>
 #include <iostream>
 #include <vector>
 #include <string>
 #include <variant>
+#include "Image.h"
 
 inline size_t computeElementCount(const std::vector<int64_t>& shape) 
 {
@@ -109,7 +109,7 @@ public:
                          std::string device = "cpu");
 
     // For single-frame usage:
-    EncoderOutputs getEncoderOutputsFromImage(const cv::Mat &originalImage, Size targetImageSize);
+    EncoderOutputs getEncoderOutputsFromImage(const Image<float> &originalImage, Size targetImageSize);
     // General helper to prepare decoder inputs.
     // 'primaryFeature' and its shape can be either the encoder embed (frame0)
     // or the fused feature (frameN). 'additionalInputs' allows caller to
@@ -121,11 +121,11 @@ public:
         const std::vector<int64_t>& primaryFeatureShape,
         std::vector<Ort::Value> additionalInputs = std::vector<Ort::Value>());
 
-    bool preprocessImage(const cv::Mat &originalImage);
-    cv::Mat inferSingleFrame(const Size &originalImageSize);
+    bool preprocessImage(const Image<float> &originalImage);
+    Image<float> inferSingleFrame(const Size &originalImageSize);
 
     // For multi-frame usage:
-    cv::Mat inferMultiFrame(const cv::Mat &originalImage,
+    Image<float> inferMultiFrame(const Image<float> &originalImage,
                             const Prompts &prompts);
 
     // Basic info
@@ -142,11 +142,11 @@ public:
                          int label,
                          std::vector<float> *inputPointValues,
                          std::vector<float> *inputLabelValues);
-    static cv::Mat createBinaryMask(const Size &targetSize, 
+    static Image<float> createBinaryMask(const Size &targetSize, 
                                     const Size &maskSize, 
                                     float *maskData,
                                     float threshold = 0.f);
-    static cv::Mat extractAndCreateMask(Ort::Value &maskTensor, const Size &targetSize);
+    static Image<float> extractAndCreateMask(Ort::Value &maskTensor, const Size &targetSize);
 
     // ORT session config
     static void setupSessionOptions(Ort::SessionOptions &options,

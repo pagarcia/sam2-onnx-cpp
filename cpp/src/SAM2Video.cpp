@@ -9,18 +9,18 @@
 // --------------------
 // Multi-frame usage
 // --------------------
-cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &prompts) {
+Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage, const Prompts &prompts) {
     // Check that the memory sessions are loaded.
     if (!m_memAttentionSession || !m_memEncoderSession) {
         std::cerr << "[ERROR] Memory sessions not loaded => did you call initializeVideo()?\n";
-        return cv::Mat();
+        return Image<float>();
     }
 
     // Timing variables.
     double encTimeMs = 0.0, attnTimeMs = 0.0, decTimeMs = 0.0, memEncTimeMs = 0.0;
 
     // Get the original and expected SAM2 sizes.
-    Size origSize(originalImage.cols, originalImage.rows);
+    Size origSize(originalImage.getWidth(), originalImage.getHeight());
     Size SAM2Size = getInputSize();
 
     // Run the encoder for the current frame.
@@ -31,7 +31,7 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
             encOutN = getEncoderOutputsFromImage(originalImage, SAM2Size);
         } catch (const std::exception &e) {
             std::cerr << "[ERROR] Encoder failed: " << e.what() << "\n";
-            return cv::Mat();
+            return Image<float>();
         }
         auto tEncEnd = std::chrono::steady_clock::now();
         encTimeMs = std::chrono::duration<double, std::milli>(tEncEnd - tEncStart).count();
@@ -64,18 +64,18 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
         auto decRes = runImageDecoderSession(decInputs);
         if (decRes.index() == 1) {
             std::cerr << "[ERROR] decode => " << std::get<std::string>(decRes) << "\n";
-            return cv::Mat();
+            return Image<float>();
         }
         auto &decOuts = std::get<0>(decRes);
         if (decOuts.size() < 3) {
             std::cerr << "[ERROR] decode returned <3 outputs.\n";
-            return cv::Mat();
+            return Image<float>();
         }
         auto tDecEnd = std::chrono::steady_clock::now();
         decTimeMs = std::chrono::duration<double, std::milli>(tDecEnd - tDecStart).count();
 
         // Build the final binary mask from the decoder output (decOuts[2] is pred_mask).
-        cv::Mat finalMask = extractAndCreateMask(decOuts[2], origSize);
+        Image<float> finalMask = extractAndCreateMask(decOuts[2], origSize);
 
         // Run the memory encoder to build the memory.
         auto tMemStart = std::chrono::steady_clock::now();
@@ -134,7 +134,7 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
         auto attnRes = runMemAttentionSession(memAttnInputs);
         if (attnRes.index() == 1) {
             std::cerr << "[ERROR] memAttn => " << std::get<std::string>(attnRes) << "\n";
-            return cv::Mat();
+            return Image<float>();
         }
         auto tAttnEnd = std::chrono::steady_clock::now();
         attnTimeMs = std::chrono::duration<double, std::milli>(tAttnEnd - tAttnStart).count();
@@ -142,7 +142,7 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
         auto &attnOuts = std::get<0>(attnRes);
         if (attnOuts.empty()) {
             std::cerr << "[ERROR] memAttn returned empty.\n";
-            return cv::Mat();
+            return Image<float>();
         }
 
         // Build decoder inputs.
@@ -170,7 +170,7 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
         auto decRes = runImageDecoderSession(decInputs);
         if (decRes.index() == 1) {
             std::cerr << "[ERROR] decode => " << std::get<std::string>(decRes) << "\n";
-            return cv::Mat();
+            return Image<float>();
         }
         auto tDecEnd = std::chrono::steady_clock::now();
         decTimeMs = std::chrono::duration<double, std::milli>(tDecEnd - tDecStart).count();
@@ -178,11 +178,11 @@ cv::Mat SAM2::inferMultiFrame(const cv::Mat &originalImage, const Prompts &promp
         auto &decOuts = std::get<0>(decRes);
         if (decOuts.size() < 3) {
             std::cerr << "[ERROR] decode returned <3 outputs.\n";
-            return cv::Mat();
+            return Image<float>();
         }
 
         // Create final binary mask from decoder output[2].
-        cv::Mat finalMask = extractAndCreateMask(decOuts[2], origSize);
+        Image<float> finalMask = extractAndCreateMask(decOuts[2], origSize);
 
         // Run memory encoder to update stored memory.
         auto tMemStart = std::chrono::steady_clock::now();

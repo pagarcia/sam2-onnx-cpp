@@ -8,6 +8,7 @@
 #include <thread>
 #include <chrono>
 #include "SAM2.h"
+#include "CVHelpers.h"
 
 using namespace std;
 using namespace std::chrono;
@@ -46,12 +47,12 @@ static void updateDisplay(AppState* state) {
         state->sam.setPrompts(prompts, state->originalImageSize);
 
         auto t0 = high_resolution_clock::now();
-        cv::Mat mask = state->sam.inferSingleFrame(state->originalImageSize);
+        Image<float> mask = state->sam.inferSingleFrame(state->originalImageSize);
         auto t1 = high_resolution_clock::now();
         auto ms = duration_cast<milliseconds>(t1 - t0).count();
         cout << "[INFO] Segmentation took " << ms << " ms." << endl;
 
-        cv::Mat overlayed = overlayMask(state->originalImage, mask);
+        cv::Mat overlayed = overlayMask(state->originalImage, CVHelpers::imageToCvMatWithType(mask, CV_8UC1, 255.0)); //integer between 0 and 255
 
         // Draw seeds
         for (size_t i = 0; i < state->clickedPoints.size(); i++) {
@@ -217,7 +218,7 @@ int runOnnxTestImage(int argc, char** argv)
 
     // 6) Preprocess => runs the "ImageEncoder"
     auto preStart = high_resolution_clock::now();
-    if (!state.sam.preprocessImage(state.originalImage)) {
+    if (!state.sam.preprocessImage(CVHelpers::normalizeRGB(state.originalImage, 255.0))) {
         cerr << "[ERROR] preprocessImage failed.\n";
         return -1;
     }

@@ -8,6 +8,7 @@
 #include <onnxruntime_cxx_api.h> // for GetAvailableProviders()
 #include "SAM2.h"
 #include "openFileDialog.h"
+#include "CVHelpers.h"
 
 // A small helper to print usage
 static void printVideoUsage(const char* argv0)
@@ -76,12 +77,12 @@ static void updateFirstFrameDisplay(VideoAppState* st)
 
     // Call single-frame => upsample => overlay
     auto t0 = std::chrono::high_resolution_clock::now();
-    cv::Mat mask = st->sam->inferSingleFrame(st->originalSize);
+    Image<float> mask = st->sam->inferSingleFrame(st->originalSize);
     auto t1 = std::chrono::high_resolution_clock::now();
     double ms = std::chrono::duration<double,std::milli>(t1 - t0).count();
     std::cout << "[INFO] Partial decode => " << ms << " ms\n";
 
-    cv::Mat overlayed = overlayMask(st->firstFrame, mask);
+    cv::Mat overlayed = overlayMask(st->firstFrame, CVHelpers::imageToCvMatWithType(mask, CV_8UC1, 255.0));
 
     // Draw seeds => FG=red, BG=blue
     for (size_t i=0; i<st->points.size(); i++) {
@@ -273,7 +274,7 @@ int runOnnxTestVideo(int argc, char** argv)
 
     // Preprocess the first frame => single-frame usage
     auto preT0=std::chrono::steady_clock::now();
-    if(!sam.preprocessImage(firstFrameBGR)){
+    if(!sam.preprocessImage(CVHelpers::normalizeRGB(firstFrameBGR))){
         std::cerr<<"[ERROR] preprocessImage failed.\n";
         return 1;
     }
@@ -379,18 +380,13 @@ int runOnnxTestVideo(int argc, char** argv)
             std::cout<<"[INFO] Frame0 => user seeds.\n";
         }
 
-        cv::Mat mask= st.sam->inferMultiFrame(frameBGR, promptsToUse);
+        Image<float> mask= st.sam->inferMultiFrame(CVHelpers::normalizeRGB(frameBGR), promptsToUse);
         auto t1= std::chrono::steady_clock::now();
         double ms= std::chrono::duration<double,std::milli>(t1-t0).count();
         std::cout<<"[INFO] Frame "<<frameIndex<<" => "<< ms <<" ms\n";
 
-        if(mask.empty()){
-            std::cerr<<"[ERROR] empty mask => break.\n";
-            break;
-        }
-
         // Use the same green overlay approach as the interactive frame
-        cv::Mat overlayed = overlayMask(frameBGR, mask);
+        cv::Mat overlayed = overlayMask(frameBGR, CVHelpers::imageToCvMatWithType(mask, CV_8UC1, 255.0));
 
         // Write the final overlay
         writer << overlayed;
