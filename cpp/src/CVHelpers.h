@@ -62,42 +62,6 @@ cv::Mat imageToCvMat(const Image<T> &img) {
 // Normalize a BGR cv::Mat to a float vector in R, G, B order.
 // The input cv::Mat is expected to be an 8-bit, 3-channel image (CV_8UC3).
 // This function returns a vector of floats with normalized values.
-inline std::vector<float> normalizeBGR(const cv::Mat &bgrImg,
-                                       float meanR = 0.485f,
-                                       float meanG = 0.456f,
-                                       float meanB = 0.406f,
-                                       float stdR  = 0.229f,
-                                       float stdG  = 0.224f,
-                                       float stdB  = 0.225f)
-{
-    // Ensure the input image has 3 channels.
-    if(bgrImg.channels() != 3) {
-        throw std::runtime_error("normalizeBGR: input image must have 3 channels (BGR).");
-    }
-    
-    const int H = bgrImg.rows;
-    const int W = bgrImg.cols;
-    const size_t total = static_cast<size_t>(3 * H * W);
-    std::vector<float> data(total, 0.f);
-    const int planeSize = W * H;
-    
-    // The input is in BGR order; output will be in R, G, B order.
-    for (int r = 0; r < H; r++) {
-        for (int c = 0; c < W; c++) {
-            int idx = r * W + c;
-            cv::Vec3b pixel = bgrImg.at<cv::Vec3b>(r, c);
-            float b = pixel[0] / 255.f;
-            float g = pixel[1] / 255.f;
-            float rVal = pixel[2] / 255.f;
-            
-            data[idx + 0 * planeSize] = (rVal - meanR) / stdR;  // R channel
-            data[idx + 1 * planeSize] = (g - meanG) / stdG;     // G channel
-            data[idx + 2 * planeSize] = (b - meanB) / stdB;     // B channel
-        }
-    }
-    return data;
-}
-
 inline Image<float> normalizeRGB(const cv::Mat &bgrImg,
                                  float meanR = 0.485f,
                                  float meanG = 0.456f,
