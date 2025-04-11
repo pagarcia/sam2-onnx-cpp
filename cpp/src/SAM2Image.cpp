@@ -13,17 +13,14 @@
 EncoderOutputs SAM2::getEncoderOutputsFromImage(const cv::Mat &originalImage, Size targetImageSize) {
     EncoderOutputs outputs;
 
-    // Resize the input image to the target dimensions.
-    cv::Mat targetImage;
-    cv::resize(originalImage, targetImage, cv::Size(targetImageSize.width, targetImageSize.height));
-
-    // Convert the resized cv::Mat to our custom Image<float> using our new helper.
-    // (normalizeBGRToImage returns an Image<float> in interleaved format.)
-    Image<float> normalizedImage = CVHelpers::normalizeRGB(targetImage);
+    Image<float> normalizedImage = CVHelpers::normalizeRGB(originalImage);
+    
+    // Now, resize our custom Image<float> to the target dimensions using our built-in method.
+    Image<float> resizedImage = normalizedImage.resize(targetImageSize.width, targetImageSize.height);
     
     // Extract image in planar format (all r values first, then g values then b values)
     // SAM2 apparently needs them in this order
-    std::vector<float> encData = normalizedImage.getDataPlanarFormat();
+    std::vector<float> encData = resizedImage.getDataPlanarFormat();
 
     // Create an input tensor using the expected encoder input shape.
     Ort::Value inTensor = createTensor<float>(m_memoryInfo, encData, m_inputShapeEncoder);
