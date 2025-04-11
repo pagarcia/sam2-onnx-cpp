@@ -3,7 +3,6 @@
 #include <stdexcept>
 #include <iostream>
 #include <sstream>
-#include <opencv2/opencv.hpp>
 #include <cstring> // for memcpy
 
 // --------------------

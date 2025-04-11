@@ -3,9 +3,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <sstream>
-#include <opencv2/opencv.hpp>
 #include <cstring> // for memcpy
-#include "CVHelpers.h"
 
 // --------------------
 // Single-frame usage
