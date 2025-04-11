@@ -173,9 +173,6 @@ private:
                const std::vector<Ort::Value> &inputTensors,
                const std::string &debugName);
 
-    // Helper for normalizing a BGR image to float[1,3,H,W].
-    std::vector<float> normalizeBGR(const cv::Mat &bgrImg);
-
 private:
     // 1) Single-frame sessions
     std::unique_ptr<Ort::Session> m_imgEncoderSession;
@@ -233,14 +230,6 @@ private:
     Ort::SessionOptions m_memEncoderOptions;
 
     Ort::MemoryInfo m_memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-
-    // Normalization constants
-    static constexpr float m_MEAN_R = 0.485f;
-    static constexpr float m_MEAN_G = 0.456f;
-    static constexpr float m_MEAN_B = 0.406f;
-    static constexpr float m_STD_R  = 0.229f;
-    static constexpr float m_STD_G  = 0.224f;
-    static constexpr float m_STD_B  = 0.225f;
 };
 
 #endif // SAMCPP__SAM_H_

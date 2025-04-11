@@ -5,37 +5,7 @@
 #include <sstream>
 #include <opencv2/opencv.hpp>
 #include <cstring> // for memcpy
-
-// --------------------
-// Normalization helper
-// --------------------
-std::vector<float> SAM2::normalizeBGR(const cv::Mat &bgrImg)
-{
-    // bgrImg must already match getInputSize() e.g. [1024,1024,3].
-    const int H = bgrImg.rows;
-    const int W = bgrImg.cols;
-    const size_t total = (size_t)1 * 3 * H * W;
-
-    std::vector<float> data(total, 0.f);
-
-    // We'll fill plane [0..2], but in 'RR,GG,BB' order or we can store 'R=plane0,G=plane1,B=plane2'
-    for(int r=0; r<H; r++){
-        for(int c=0; c<W; c++){
-            int idx = r*W + c;
-            int planeSize = W * H;
-            auto pix = bgrImg.at<cv::Vec3b>(r, c);
-
-            float b = pix[0]/255.f;
-            float g = pix[1]/255.f;
-            float r = pix[2]/255.f;
-
-            data[idx + planeSize*0] = (r - m_MEAN_R) / m_STD_R;  // R-plane
-            data[idx + planeSize*1] = (g - m_MEAN_G) / m_STD_G;  // G-plane
-            data[idx + planeSize*2] = (b - m_MEAN_B) / m_STD_B;  // B-plane
-        }
-    }
-    return data;
-}
+#include "CVHelpers.h"
 
 // --------------------
 // Single-frame usage
@@ -48,7 +18,7 @@ EncoderOutputs SAM2::getEncoderOutputsFromImage(const cv::Mat &originalImage, Si
 
     // Assume 'frame' is already resized to the expected SAM2ImageSize.
     // (If not, you could resize here or let the caller do it.)
-    std::vector<float> encData = normalizeBGR(targetImage);
+    std::vector<float> encData = CVHelpers::normalizeBGR(targetImage);
 
     // Create an input tensor using the input shape (m_inputShapeEncoder)
     Ort::Value inTensor = createTensor<float>(m_memoryInfo, encData, m_inputShapeEncoder);
