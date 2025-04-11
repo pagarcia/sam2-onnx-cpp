@@ -206,8 +206,9 @@ Image<float> SAM2::createBinaryMask(const Size &targetSize,
                                     float *maskData, 
                                     float threshold)
 {
-    // Instead of constructing a temporary vector, 
-    // create an Image<float> for the low-res mask directly.
+    // Compute the total number of pixels in the low-resolution mask.
+    // (Assuming a single channel mask)
+    // Create an Image<float> for the low-res mask directly.
     Image<float> lowResImg(maskSize.width, maskSize.height, 1);
     std::memcpy(lowResImg.getData().data(), maskData, sizeof(float) * maskSize.width * maskSize.height);
     
@@ -217,14 +218,24 @@ Image<float> SAM2::createBinaryMask(const Size &targetSize,
     // Create a new Image<float> for the binary mask (single channel).
     Image<float> binaryMask(targetSize.width, targetSize.height, 1);
     
-    // Apply thresholding: if a pixel's value is greater than the threshold,
-    // set the corresponding binary pixel to 1.0; otherwise set it to 0.0.
-    for (int y = 0; y < binaryMask.getHeight(); ++y) {
-        for (int x = 0; x < binaryMask.getWidth(); ++x) {
-            float val = resizedImg.at(x, y);
-            binaryMask.at(x, y) = (val > threshold) ? 1.0f : 0.0f;
+    // Determine the dimensions for easier use.
+    const int width = binaryMask.getWidth();
+    const int height = binaryMask.getHeight();
+    
+    // Parallelize the thresholding loop over rows.
+    std::vector<int> rowIndices(height);
+    std::iota(rowIndices.begin(), rowIndices.end(), 0);
+    std::for_each(std::execution::par, rowIndices.begin(), rowIndices.end(),
+        [&](int y) {
+            // Process each pixel in row y.
+            for (int x = 0; x < width; ++x) {
+                float val = resizedImg.at(x, y);
+                // Apply thresholding: if val > threshold then set pixel to 1.0f, else 0.0f.
+                binaryMask.at(x, y) = (val > threshold) ? 1.0f : 0.0f;
+            }
         }
-    }
+    );
+
     return binaryMask;
 }
 
