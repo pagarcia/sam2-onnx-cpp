@@ -36,6 +36,28 @@ public:
     const std::vector<T>& getData() const { return data; }
     std::vector<T>& getData() { return data; }
 
+    // For multi-channel images, planar means the output vector has all pixels for channel 0,
+    // then all for channel 1, etc. For a single-channel image, it's the same as the internal data.
+    std::vector<T> getDataPlanarFormat() const {
+        size_t totalPixels = static_cast<size_t>(width * height);
+        std::vector<T> planarData;
+        planarData.resize(totalPixels * channels);
+        if (channels == 1) {
+            // If it's a single-channel image, return a copy of data.
+            return data;
+        }
+        // For each channel, copy its pixel values.
+        for (int c = 0; c < channels; ++c) {
+            for (size_t p = 0; p < totalPixels; ++p) {
+                // In interleaved format, pixel at index p for channel c is at:
+                // p * channels + c.
+                // In planar format, it should be placed at: c * totalPixels + p.
+                planarData[c * totalPixels + p] = data[p * channels + c];
+            }
+        }
+        return planarData;
+    }
+
     // Access pixel at (x, y) and channel c (row-major order).
     // Index is computed as: (y * width + x)*channels + c.
     T& at(int x, int y, int c) {
