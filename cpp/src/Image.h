@@ -5,8 +5,9 @@
 #include <stdexcept>
 #include <cmath>
 #include <algorithm>
+#include <numeric>      // for std::iota
+#include <execution>    // for std::execution::par (requires C++17)
 
-// Templated Image container.
 template <typename T>
 class Image {
 public:
@@ -49,47 +50,50 @@ public:
         return data[y * width + x];
     }
 
-    // Bilinear interpolation resize.
-    // This returns a new Image<T> of dimensions (newWidth, newHeight).
-    // It maps the center of each output pixel to a corresponding source coordinate.
+    // Resize function using bilinear interpolation (parallelized using C++17).
+    // Returns a new Image<T> of dimensions (newWidth, newHeight).
     Image<T> resize(int newWidth, int newHeight) const {
         Image<T> resized(newWidth, newHeight);
 
-        // Compute scaling factors from new image to source image.
+        // Compute scaling factors.
         double scaleX = static_cast<double>(width) / newWidth;
         double scaleY = static_cast<double>(height) / newHeight;
 
-        // Loop over output pixel coordinates.
-        for (int j = 0; j < newHeight; j++) {
-            // Map output row j to a source Y coordinate.
-            double srcY = (j + 0.5) * scaleY - 0.5;
-            int y0 = std::max(0, static_cast<int>(std::floor(srcY)));
-            int y1 = std::min(height - 1, y0 + 1);
-            double dy = srcY - y0;
+        // Create an index vector for rows.
+        std::vector<int> rowIndices(newHeight);
+        std::iota(rowIndices.begin(), rowIndices.end(), 0);
 
-            for (int i = 0; i < newWidth; i++) {
-                // Map output column i to a source X coordinate.
-                double srcX = (i + 0.5) * scaleX - 0.5;
-                int x0 = std::max(0, static_cast<int>(std::floor(srcX)));
-                int x1 = std::min(width - 1, x0 + 1);
-                double dx = srcX - x0;
+        // Parallelize the outer loop over rows.
+        std::for_each(std::execution::par, rowIndices.begin(), rowIndices.end(),
+            [&](int j) {
+                // Map the output row center to the source image.
+                double srcY = (j + 0.5) * scaleY - 0.5;
+                int y0 = std::max(0, static_cast<int>(std::floor(srcY)));
+                int y1 = std::min(height - 1, y0 + 1);
+                double dy = srcY - y0;
 
-                // Get the four neighboring pixel values.
-                double v00 = static_cast<double>(at(x0, y0));
-                double v10 = static_cast<double>(at(x1, y0));
-                double v01 = static_cast<double>(at(x0, y1));
-                double v11 = static_cast<double>(at(x1, y1));
+                for (int i = 0; i < newWidth; i++) {
+                    double srcX = (i + 0.5) * scaleX - 0.5;
+                    int x0 = std::max(0, static_cast<int>(std::floor(srcX)));
+                    int x1 = std::min(width - 1, x0 + 1);
+                    double dx = srcX - x0;
 
-                // Bilinear interpolation.
-                double value = (1 - dx) * (1 - dy) * v00 +
-                               dx       * (1 - dy) * v10 +
-                               (1 - dx) * dy       * v01 +
-                               dx       * dy       * v11;
+                    // Fetch the four neighboring pixels.
+                    double v00 = static_cast<double>(at(x0, y0));
+                    double v10 = static_cast<double>(at(x1, y0));
+                    double v01 = static_cast<double>(at(x0, y1));
+                    double v11 = static_cast<double>(at(x1, y1));
 
-                // Write the interpolated value to the resized image.
-                resized.at(i, j) = static_cast<T>(value);
+                    // Bilinear interpolation formula.
+                    double value = (1 - dx) * (1 - dy) * v00 +
+                                   dx       * (1 - dy) * v10 +
+                                   (1 - dx) * dy       * v01 +
+                                   dx       * dy       * v11;
+
+                    resized.at(i, j) = static_cast<T>(value);
+                }
             }
-        }
+        );
         return resized;
     }
 
