@@ -10,46 +10,49 @@
 namespace CVHelpers {
 
 // Convert a cv::Mat to an Image<T>
-// This function checks that the cv::Mat data type matches T by using cv::DataType<T>::type.
+// This function computes the expected type as CV_MAKETYPE(cv::DataType<T>::depth, channels)
+// so that multi-channel images are handled correctly.
 template <typename T>
 Image<T> cvMatToImage(const cv::Mat &mat) {
-    int expectedType = cv::DataType<T>::type;
+    int channels = mat.channels();
+    int expectedDepth = cv::DataType<T>::depth;
+    int expectedType = CV_MAKETYPE(expectedDepth, channels);
     if(mat.type() != expectedType) {
         throw std::runtime_error("cvMatToImage: matrix type does not match template type");
     }
-
-    // Create an Image with the same width and height as the cv::Mat.
-    Image<T> img(mat.cols, mat.rows);
-
-    // If cv::Mat is stored continuously in memory, use memcpy for efficient copy.
+    
+    // Create an Image with the same width, height, and number of channels.
+    Image<T> img(mat.cols, mat.rows, channels);
+    
+    // Copy data: note that total number of elements is mat.total() * channels.
     if(mat.isContinuous()) {
-        std::memcpy(img.getData().data(), mat.ptr<T>(), mat.total() * sizeof(T));
+        std::memcpy(img.getData().data(), mat.ptr<T>(), mat.total() * channels * sizeof(T));
     } else {
-        // Otherwise, copy row by row.
         for (int r = 0; r < mat.rows; r++) {
             const T* rowPtr = mat.ptr<T>(r);
-            std::copy(rowPtr, rowPtr + mat.cols, img.getData().begin() + r * mat.cols);
+            std::copy(rowPtr, rowPtr + mat.cols * channels,
+                      img.getData().begin() + r * (mat.cols * channels));
         }
     }
     return img;
 }
 
-// Convert an Image<T> to cv::Mat
-// This function allocates a new cv::Mat and copies the image data from our container.
+// Convert an Image<T> to cv::Mat.
+// The image type is computed as CV_MAKETYPE(cv::DataType<T>::depth, channels)
 template <typename T>
 cv::Mat imageToCvMat(const Image<T> &img) {
-    int type = cv::DataType<T>::type;
-    // Create a cv::Mat with the same dimensions.
-    cv::Mat mat(img.getHeight(), img.getWidth(), type);
+    int channels = img.getChannels();
+    int depth = cv::DataType<T>::depth;
+    int type = CV_MAKETYPE(depth, channels);
     
+    cv::Mat mat(img.getHeight(), img.getWidth(), type);
     if(mat.isContinuous()) {
         std::memcpy(mat.ptr<T>(), img.getData().data(), img.getData().size() * sizeof(T));
     } else {
-        // Copy row by row in case the cv::Mat is not stored continuously.
         for (int r = 0; r < mat.rows; r++) {
             T* rowPtr = mat.ptr<T>(r);
-            std::copy(img.getData().begin() + r * img.getWidth(),
-                      img.getData().begin() + (r + 1) * img.getWidth(),
+            std::copy(img.getData().begin() + r * img.getWidth() * channels,
+                      img.getData().begin() + (r + 1) * img.getWidth() * channels,
                       rowPtr);
         }
     }
