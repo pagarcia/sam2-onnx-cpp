@@ -98,6 +98,44 @@ inline std::vector<float> normalizeBGR(const cv::Mat &bgrImg,
     return data;
 }
 
+inline Image<float> normalizeBGRToImage(const cv::Mat &bgrImg,
+                                        float meanR = 0.485f,
+                                        float meanG = 0.456f,
+                                        float meanB = 0.406f,
+                                        float stdR  = 0.229f,
+                                        float stdG  = 0.224f,
+                                        float stdB  = 0.225f)
+{
+    if(bgrImg.channels() != 3) {
+        throw std::runtime_error("normalizeBGRToImage: input image must have 3 channels (BGR).");
+    }
+    
+    const int H = bgrImg.rows;
+    const int W = bgrImg.cols;
+    
+    // Create an Image<float> with the same width and height as the input and 3 channels.
+    // We will store the data in interleaved format: for each pixel, channels appear consecutively.
+    Image<float> img(W, H, 3);
+    
+    // Loop over each pixel.
+    for (int r = 0; r < H; r++) {
+        for (int c = 0; c < W; c++) {
+            cv::Vec3b pixel = bgrImg.at<cv::Vec3b>(r, c);
+            // Convert channels to float in [0,1].
+            float b = pixel[0] / 255.f;
+            float g = pixel[1] / 255.f;
+            float rVal = pixel[2] / 255.f;
+            
+            // Store in interleaved order as R, G, B.
+            img.at(c, r, 0) = (rVal - meanR) / stdR;
+            img.at(c, r, 1) = (g - meanG) / stdG;
+            img.at(c, r, 2) = (b - meanB) / stdB;
+        }
+    }
+    
+    return img;
+}
+
 } // namespace CVHelpers
 
 #endif // CVHELPERS_H
