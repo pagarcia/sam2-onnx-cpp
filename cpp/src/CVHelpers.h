@@ -88,9 +88,9 @@ inline std::vector<float> normalizeBGR(const cv::Mat &bgrImg,
             cv::Vec3b pixel = bgrImg.at<cv::Vec3b>(r, c);
             float b = pixel[0] / 255.f;
             float g = pixel[1] / 255.f;
-            float r = pixel[2] / 255.f;
+            float rVal = pixel[2] / 255.f;
             
-            data[idx + 0 * planeSize] = (r - meanR) / stdR;  // R channel
+            data[idx + 0 * planeSize] = (rVal - meanR) / stdR;  // R channel
             data[idx + 1 * planeSize] = (g - meanG) / stdG;     // G channel
             data[idx + 2 * planeSize] = (b - meanB) / stdB;     // B channel
         }
@@ -98,16 +98,16 @@ inline std::vector<float> normalizeBGR(const cv::Mat &bgrImg,
     return data;
 }
 
-inline Image<float> normalizeBGRToImage(const cv::Mat &bgrImg,
-                                        float meanR = 0.485f,
-                                        float meanG = 0.456f,
-                                        float meanB = 0.406f,
-                                        float stdR  = 0.229f,
-                                        float stdG  = 0.224f,
-                                        float stdB  = 0.225f)
+inline Image<float> normalizeRGB(const cv::Mat &bgrImg,
+                                 float meanR = 0.485f,
+                                 float meanG = 0.456f,
+                                 float meanB = 0.406f,
+                                 float stdR  = 0.229f,
+                                 float stdG  = 0.224f,
+                                 float stdB  = 0.225f)
 {
     if(bgrImg.channels() != 3) {
-        throw std::runtime_error("normalizeBGRToImage: input image must have 3 channels (BGR).");
+        throw std::runtime_error("standardizeRGB: input image must have 3 channels (BGR).");
     }
     
     const int H = bgrImg.rows;
@@ -121,15 +121,17 @@ inline Image<float> normalizeBGRToImage(const cv::Mat &bgrImg,
     for (int r = 0; r < H; r++) {
         for (int c = 0; c < W; c++) {
             cv::Vec3b pixel = bgrImg.at<cv::Vec3b>(r, c);
+            // By default, OpenCV stores 8-bit color images in BGR order
+            // So the first element is blue, the second green, and the third red
             // Convert channels to float in [0,1].
-            float b = pixel[0] / 255.f;
-            float g = pixel[1] / 255.f;
+            float bVal = pixel[0] / 255.f;
+            float gVal = pixel[1] / 255.f;
             float rVal = pixel[2] / 255.f;
             
             // Store in interleaved order as R, G, B.
             img.at(c, r, 0) = (rVal - meanR) / stdR;
-            img.at(c, r, 1) = (g - meanG) / stdG;
-            img.at(c, r, 2) = (b - meanB) / stdB;
+            img.at(c, r, 1) = (gVal - meanG) / stdG;
+            img.at(c, r, 2) = (bVal - meanB) / stdB;
         }
     }
     

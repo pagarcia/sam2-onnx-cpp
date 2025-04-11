@@ -13,32 +13,41 @@
 EncoderOutputs SAM2::getEncoderOutputsFromImage(const cv::Mat &originalImage, Size targetImageSize) {
     EncoderOutputs outputs;
 
+    // Resize the input image to the target dimensions.
     cv::Mat targetImage;
     cv::resize(originalImage, targetImage, cv::Size(targetImageSize.width, targetImageSize.height));
 
-    // Assume 'frame' is already resized to the expected SAM2ImageSize.
-    // (If not, you could resize here or let the caller do it.)
-    std::vector<float> encData = CVHelpers::normalizeBGR(targetImage);
+    // Convert the resized cv::Mat to our custom Image<float> using our new helper.
+    // (normalizeBGRToImage returns an Image<float> in interleaved format.)
+    Image<float> normalizedImage = CVHelpers::normalizeRGB(targetImage);
+    
+    // Extract image in planar format (all r values first, then g values then b values)
+    // SAM2 apparently needs them in this order
+    std::vector<float> encData = normalizedImage.getDataPlanarFormat();
 
-    // Create an input tensor using the input shape (m_inputShapeEncoder)
+    // Create an input tensor using the expected encoder input shape.
     Ort::Value inTensor = createTensor<float>(m_memoryInfo, encData, m_inputShapeEncoder);
     std::vector<Ort::Value> encInputs;
     encInputs.reserve(1);
     encInputs.push_back(std::move(inTensor));
 
+    // Run the encoder.
     auto encRes = runImageEncoderSession(encInputs);
-    if(encRes.index() == 1) throw std::runtime_error(std::get<std::string>(encRes));
+    if(encRes.index() == 1) 
+        throw std::runtime_error(std::get<std::string>(encRes));
     outputs.outputs = std::move(std::get<0>(encRes));
 
-    if(outputs.outputs.size() < 3) throw std::runtime_error("Encoder returned insufficient outputs.");
+    if(outputs.outputs.size() < 3)
+        throw std::runtime_error("Encoder returned insufficient outputs.");
 
-    // Extract the first three outputs:
+    // Extract the first three outputs.
     extractTensorData<float>(outputs.outputs[0], outputs.embedData, outputs.embedShape);
     extractTensorData<float>(outputs.outputs[1], outputs.feats0Data, outputs.feats0Shape);
     extractTensorData<float>(outputs.outputs[2], outputs.feats1Data, outputs.feats1Shape);
 
     return outputs;
 }
+
 
 std::vector<Ort::Value> SAM2::prepareDecoderInputs(
     const std::vector<float>& promptCoords,
