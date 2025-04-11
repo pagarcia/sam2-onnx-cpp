@@ -40,21 +40,30 @@ public:
     // then all for channel 1, etc. For a single-channel image, it's the same as the internal data.
     std::vector<T> getDataPlanarFormat() const {
         size_t totalPixels = static_cast<size_t>(width * height);
-        std::vector<T> planarData;
-        planarData.resize(totalPixels * channels);
+        size_t totalValues = totalPixels * channels;
+        // Reserve storage for the entire planar data.
+        std::vector<T> planarData(totalValues);
+        
         if (channels == 1) {
-            // If it's a single-channel image, return a copy of data.
+            // If the image is single-channel, just return a copy.
             return data;
         }
-        // For each channel, copy its pixel values.
-        for (int c = 0; c < channels; ++c) {
-            for (size_t p = 0; p < totalPixels; ++p) {
-                // In interleaved format, pixel at index p for channel c is at:
-                // p * channels + c.
-                // In planar format, it should be placed at: c * totalPixels + p.
-                planarData[c * totalPixels + p] = data[p * channels + c];
-            }
-        }
+        
+        // Create a vector of indices [0, totalValues).
+        std::vector<size_t> indices(totalValues);
+        std::iota(indices.begin(), indices.end(), 0);
+        
+        // For each flat index i, determine the channel and pixel indices:
+        //   channel c = i / totalPixels
+        //   pixel index p = i % totalPixels
+        // In the interleaved format, the pixel value for channel c is stored at: p * channels + c.
+        std::for_each(std::execution::par, indices.begin(), indices.end(),
+            [this, totalPixels, &planarData](size_t i) {
+                size_t c = i / totalPixels;
+                size_t p = i % totalPixels;
+                planarData[i] = data[p * channels + c];
+            });
+        
         return planarData;
     }
 
