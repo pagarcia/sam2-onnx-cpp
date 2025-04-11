@@ -60,12 +60,12 @@ cv::Mat imageToCvMat(const Image<T> &img) {
 // The input cv::Mat is expected to be an 8-bit, 3-channel image (CV_8UC3).
 // This function returns a vector of floats with normalized values.
 inline std::vector<float> normalizeBGR(const cv::Mat &bgrImg,
-                                         float meanR = 0.485f,
-                                         float meanG = 0.456f,
-                                         float meanB = 0.406f,
-                                         float stdR  = 0.229f,
-                                         float stdG  = 0.224f,
-                                         float stdB  = 0.225f)
+                                       float meanR = 0.485f,
+                                       float meanG = 0.456f,
+                                       float meanB = 0.406f,
+                                       float stdR  = 0.229f,
+                                       float stdG  = 0.224f,
+                                       float stdB  = 0.225f)
 {
     // Ensure the input image has 3 channels.
     if(bgrImg.channels() != 3) {
@@ -85,9 +85,9 @@ inline std::vector<float> normalizeBGR(const cv::Mat &bgrImg,
             cv::Vec3b pixel = bgrImg.at<cv::Vec3b>(r, c);
             float b = pixel[0] / 255.f;
             float g = pixel[1] / 255.f;
-            float rVal = pixel[2] / 255.f;
+            float r = pixel[2] / 255.f;
             
-            data[idx + 0 * planeSize] = (rVal - meanR) / stdR;  // R channel
+            data[idx + 0 * planeSize] = (r - meanR) / stdR;  // R channel
             data[idx + 1 * planeSize] = (g - meanG) / stdG;     // G channel
             data[idx + 2 * planeSize] = (b - meanB) / stdB;     // B channel
         }
