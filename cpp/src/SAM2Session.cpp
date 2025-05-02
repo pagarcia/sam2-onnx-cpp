@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <sstream>
-#include <cstring>
+#include <cstring> // for memcpy
 
 #ifdef _WIN32
 #include <windows.h>
@@ -66,6 +66,17 @@ bool SAM2::clearSessions()
         return false;
     }
     return true;
+}
+
+void SAM2::resetMemory()
+{
+    m_hasMemory          = false;
+    m_maskMemFeatures.clear();
+    m_maskMemFeaturesShape.clear();
+    m_maskMemPosEnc.clear();
+    m_maskMemPosEncShape.clear();
+    m_temporalCode.clear();
+    m_temporalCodeShape.clear();
 }
 
 SAM2Size SAM2::getInputSize()

@@ -109,7 +109,7 @@ public:
                          std::string device = "cpu");
 
     /// Clear any accumulated memory
-    void resetMemory() { clearSessions(); }
+    void resetMemory();
 
     // For single-frame usage:
     EncoderOutputs getEncoderOutputsFromImage(const Image<float> &originalImage, SAM2Size targetImageSize);
