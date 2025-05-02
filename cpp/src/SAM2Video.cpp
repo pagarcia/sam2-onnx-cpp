@@ -3,12 +3,12 @@
 #include <stdexcept>
 #include <iostream>
 #include <sstream>
-#include <cstring> // for memcpy
+#include <cstring>
 
 // --------------------
 // Multi-frame usage
 // --------------------
-Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage, const Prompts &prompts) {
+Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage, const SAM2Prompts &prompts) {
     // Check that the memory sessions are loaded.
     if (!m_memAttentionSession || !m_memEncoderSession) {
         std::cerr << "[ERROR] Memory sessions not loaded => did you call initializeVideo()?\n";
@@ -19,15 +19,15 @@ Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage, const Prom
     double encTimeMs = 0.0, attnTimeMs = 0.0, decTimeMs = 0.0, memEncTimeMs = 0.0;
 
     // Get the original and expected SAM2 sizes.
-    Size origSize(originalImage.getWidth(), originalImage.getHeight());
-    Size SAM2Size = getInputSize();
+    SAM2Size origSize(originalImage.getWidth(), originalImage.getHeight());
+    SAM2Size targetSize = getInputSize();
 
     // Run the encoder for the current frame.
     EncoderOutputs encOutN;
     {
         auto tEncStart = std::chrono::steady_clock::now();
         try {
-            encOutN = getEncoderOutputsFromImage(originalImage, SAM2Size);
+            encOutN = getEncoderOutputsFromImage(originalImage, targetSize);
         } catch (const std::exception &e) {
             std::cerr << "[ERROR] Encoder failed: " << e.what() << "\n";
             return Image<float>();
@@ -56,7 +56,7 @@ Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage, const Prom
             encOutN.embedData,      // primary feature for frame0
             encOutN.embedShape,
             std::move(additionalInputsFrame0)  // additional inputs (feats0 and feats1)
-        );
+            );
 
         // Run the decoder.
         auto tDecStart = std::chrono::steady_clock::now();
@@ -102,7 +102,7 @@ Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage, const Prom
         extractTensorData<float>(memEncOuts[2], m_temporalCode, m_temporalCodeShape);
 
         m_hasMemory = true;
-        std::cout << "[INFO] Frame0 times => Enc: " << encTimeMs << " ms, Dec: " 
+        std::cout << "[INFO] Frame0 times => Enc: " << encTimeMs << " ms, Dec: "
                   << decTimeMs << " ms, MemEnc: " << memEncTimeMs << " ms\n";
 
         return finalMask;
@@ -163,7 +163,7 @@ Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage, const Prom
             fusedVec,         // primary feature for frameN (fused feature)
             fusedShape,
             std::move(additionalInputsFrameN)  // additional inputs (moved values from encoder outputs)
-        );
+            );
 
         auto tDecStart = std::chrono::steady_clock::now();
         auto decRes = runImageDecoderSession(decInputs);

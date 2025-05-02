@@ -14,7 +14,7 @@
 #include <variant>
 #include "Image.h"
 
-inline size_t computeElementCount(const std::vector<int64_t>& shape) 
+inline size_t computeElementCount(const std::vector<int64_t>& shape)
 {
     size_t count = 1;
     for (auto dim : shape) count *= static_cast<size_t>(dim);
@@ -32,7 +32,7 @@ inline Ort::Value createTensor(const Ort::MemoryInfo &memoryInfo,
         data.size(),
         shape.data(),
         shape.size()
-    );
+        );
 }
 
 template <typename T>
@@ -47,36 +47,36 @@ inline void extractTensorData(Ort::Value &tensor,
     shapeOut.assign(shape.begin(), shape.end());
 }
 
-struct Point {
+struct SAM2Point {
     int x;
     int y;
-    Point(int xVal = 0, int yVal = 0) : x(xVal), y(yVal) {}
+    SAM2Point(int xVal = 0, int yVal = 0) : x(xVal), y(yVal) {}
 };
 
-struct Rect {
-    int x; // x coordinate of the top-left corner 
+struct SAM2Rect {
+    int x; // x coordinate of the top-left corner
     int y; // y coordinate of the top-left corner
-    int width; // width of the rectangle 
-    int height; // height of the rectangle 
-    Rect(int xVal = 0, int yVal = 0, int w = 0, int h = 0) : x(xVal), y(yVal), width(w), height(h) {}
-    Point br() const { return Point(x + width, y + height); }
+    int width; // width of the rectangle
+    int height; // height of the rectangle
+    SAM2Rect(int xVal = 0, int yVal = 0, int w = 0, int h = 0) : x(xVal), y(yVal), width(w), height(h) {}
+    SAM2Point br() const { return SAM2Point(x + width, y + height); }
 };
 
-struct Prompts {
-    std::vector<Point> points;
+struct SAM2Prompts {
+    std::vector<SAM2Point> points;
     std::vector<int>   pointLabels;
-    std::vector<Rect>  rects;
+    std::vector<SAM2Rect>  rects;
 };
 
-struct Node {
+struct SAM2Node {
     std::string name;
     std::vector<int64_t> dim;
 };
 
-struct Size {
+struct SAM2Size {
     int width;
     int height;
-    Size(int w = 0, int h = 0) : width(w), height(h) {}
+    SAM2Size(int w = 0, int h = 0) : width(w), height(h) {}
 };
 
 struct EncoderOutputs {
@@ -108,8 +108,11 @@ public:
                          int threadsNumber,
                          std::string device = "cpu");
 
+    /// Clear any accumulated memory
+    void resetMemory() { clearSessions(); }
+
     // For single-frame usage:
-    EncoderOutputs getEncoderOutputsFromImage(const Image<float> &originalImage, Size targetImageSize);
+    EncoderOutputs getEncoderOutputsFromImage(const Image<float> &originalImage, SAM2Size targetImageSize);
     // General helper to prepare decoder inputs.
     // 'primaryFeature' and its shape can be either the encoder embed (frame0)
     // or the fused feature (frameN). 'additionalInputs' allows caller to
@@ -122,31 +125,31 @@ public:
         std::vector<Ort::Value> additionalInputs = std::vector<Ort::Value>());
 
     bool preprocessImage(const Image<float> &originalImage);
-    Image<float> inferSingleFrame(const Size &originalImageSize);
+    Image<float> inferSingleFrame(const SAM2Size &originalImageSize);
 
     // For multi-frame usage:
     Image<float> inferMultiFrame(const Image<float> &originalImage,
-                            const Prompts &prompts);
+                                 const SAM2Prompts &prompts);
 
     // Basic info
-    Size getInputSize();
+    SAM2Size getInputSize();
     bool modelExists(const std::string &modelPath);
 
     // Prompt and helpers
-    void setPrompts(const Prompts &prompts, 
-                    const Size &originalImageSize);
-    void setRectsLabels(const std::list<Rect> &rects,
+    void setPrompts(const SAM2Prompts &prompts,
+                    const SAM2Size &originalImageSize);
+    void setRectsLabels(const std::list<SAM2Rect> &rects,
                         std::vector<float> *inputPointValues,
                         std::vector<float> *inputLabelValues);
-    void setPointsLabels(const std::list<Point> &points,
+    void setPointsLabels(const std::list<SAM2Point> &points,
                          int label,
                          std::vector<float> *inputPointValues,
                          std::vector<float> *inputLabelValues);
-    static Image<float> createBinaryMask(const Size &targetSize, 
-                                    const Size &maskSize, 
-                                    float *maskData,
-                                    float threshold = 0.f);
-    static Image<float> extractAndCreateMask(Ort::Value &maskTensor, const Size &targetSize);
+    static Image<float> createBinaryMask(const SAM2Size &targetSize,
+                                         const SAM2Size &maskSize,
+                                         float *maskData,
+                                         float threshold = 0.f);
+    static Image<float> extractAndCreateMask(Ort::Value &maskTensor, const SAM2Size &targetSize);
 
     // ORT session config
     static void setupSessionOptions(Ort::SessionOptions &options,
@@ -154,7 +157,7 @@ public:
                                     GraphOptimizationLevel optLevel,
                                     const std::string &device);
 
-    static std::vector<Node> getSessionNodes(Ort::Session* session, bool isInput);
+    static std::vector<SAM2Node> getSessionNodes(Ort::Session* session, bool isInput);
 
     // Exposed pipeline-step methods (optional advanced usage):
     std::variant<std::vector<Ort::Value>, std::string> runImageEncoderSession(const std::vector<Ort::Value> &inputTensors);
@@ -168,8 +171,8 @@ private:
     // The single helper that calls session->Run(...).
     std::variant<std::vector<Ort::Value>, std::string>
     runSession(Ort::Session* session,
-               const std::vector<Node> &inputNodes,
-               const std::vector<Node> &outputNodes,
+               const std::vector<SAM2Node> &inputNodes,
+               const std::vector<SAM2Node> &outputNodes,
                const std::vector<Ort::Value> &inputTensors,
                const std::string &debugName);
 
@@ -183,16 +186,16 @@ private:
     std::unique_ptr<Ort::Session> m_memEncoderSession;
 
     // Node info
-    std::vector<Node> m_imgEncoderInputNodes;
-    std::vector<Node> m_imgEncoderOutputNodes;
-    std::vector<Node> m_imgDecoderInputNodes;
-    std::vector<Node> m_imgDecoderOutputNodes;
+    std::vector<SAM2Node> m_imgEncoderInputNodes;
+    std::vector<SAM2Node> m_imgEncoderOutputNodes;
+    std::vector<SAM2Node> m_imgDecoderInputNodes;
+    std::vector<SAM2Node> m_imgDecoderOutputNodes;
 
     // Node info for memory
-    std::vector<Node> m_memAttentionInputNodes;
-    std::vector<Node> m_memAttentionOutputNodes;
-    std::vector<Node> m_memEncoderInputNodes;
-    std::vector<Node> m_memEncoderOutputNodes;
+    std::vector<SAM2Node> m_memAttentionInputNodes;
+    std::vector<SAM2Node> m_memAttentionOutputNodes;
+    std::vector<SAM2Node> m_memEncoderInputNodes;
+    std::vector<SAM2Node> m_memEncoderOutputNodes;
 
     // Shapes
     std::vector<int64_t> m_inputShapeEncoder;     // typically [1,3,1024,1024]

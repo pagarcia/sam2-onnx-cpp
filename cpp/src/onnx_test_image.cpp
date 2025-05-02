@@ -17,10 +17,10 @@ struct AppState {
     SAM2 sam;
     cv::Mat originalImage;
     cv::Mat displayImage;
-    Size originalImageSize;   // original image size
+    SAM2Size originalImageSize;   // original image size
 
     // Instead of storing scaled points, store them in original coords
-    vector<Point> clickedPoints;
+    vector<SAM2Point> clickedPoints;
     vector<int> pointLabels; // 1=positive, 0=negative
 };
 
@@ -39,7 +39,7 @@ static void updateDisplay(AppState* state) {
         state->originalImage.copyTo(state->displayImage);
     } else {
         // Build a Prompts struct from the user’s clickedPoints
-        Prompts prompts;
+        SAM2Prompts prompts;
         prompts.points      = state->clickedPoints;  // in original coords
         prompts.pointLabels = state->pointLabels;
 
@@ -86,7 +86,7 @@ static void onMouse(int event, int x, int y, int, void* userdata) {
     cout << "[INFO] " << (positive ? "Positive" : "Negative")
          << " point at (" << x << ", " << y << ").\n";
 
-    state->clickedPoints.push_back(Point(x, y));
+    state->clickedPoints.push_back(SAM2Point(x, y));
     state->pointLabels.push_back(positive ? 1 : 0);
 
     updateDisplay(state);

@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <sstream>
-#include <cstring> // for memcpy
+#include <cstring>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -68,16 +68,16 @@ bool SAM2::clearSessions()
     return true;
 }
 
-Size SAM2::getInputSize()
+SAM2Size SAM2::getInputSize()
 {
     // Typically [1,3,1024,1024] => shape[2]=1024 (H), shape[3]=1024 (W)
     if (m_inputShapeEncoder.size() >= 4) {
-        return Size(
+        return SAM2Size(
             static_cast<int>(m_inputShapeEncoder[3]),
             static_cast<int>(m_inputShapeEncoder[2])
-        );
+            );
     }
-    return Size(0, 0);
+    return SAM2Size(0, 0);
 }
 
 void SAM2::setupSessionOptions(Ort::SessionOptions &options,
@@ -160,16 +160,16 @@ bool SAM2::initialize(const std::string &encoderPath,
     setupSessionOptions(m_decoderOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
 
     try {
-    #ifdef _WIN32
+#ifdef _WIN32
         std::wstring wEnc = strToWstr(encoderPath);
         std::wstring wDec = strToWstr(decoderPath);
 
         m_imgEncoderSession = std::make_unique<Ort::Session>(m_encoderEnv, wEnc.c_str(), m_encoderOptions);
         m_imgDecoderSession = std::make_unique<Ort::Session>(m_decoderEnv, wDec.c_str(), m_decoderOptions);
-    #else
+#else
         m_imgEncoderSession = std::make_unique<Ort::Session>(m_encoderEnv, encoderPath.c_str(), m_encoderOptions);
         m_imgDecoderSession = std::make_unique<Ort::Session>(m_decoderEnv, decoderPath.c_str(), m_decoderOptions);
-    #endif
+#endif
 
         // Query shapes for the encoder's 3 main outputs
         {
@@ -222,16 +222,16 @@ bool SAM2::initializeVideo(const std::string &encoderPath,
     setupSessionOptions(m_memEncoderOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
 
     try {
-    #ifdef _WIN32
+#ifdef _WIN32
         std::wstring wAttn = strToWstr(memAttentionPath);
         std::wstring wEnc2 = strToWstr(memEncoderPath);
 
         m_memAttentionSession = std::make_unique<Ort::Session>(m_memAttentionEnv, wAttn.c_str(), m_memAttentionOptions);
         m_memEncoderSession  = std::make_unique<Ort::Session>(m_memEncoderEnv, wEnc2.c_str(), m_memEncoderOptions);
-    #else
+#else
         m_memAttentionSession = std::make_unique<Ort::Session>(m_memAttentionEnv, memAttentionPath.c_str(), m_memAttentionOptions);
         m_memEncoderSession  = std::make_unique<Ort::Session>(m_memEncoderEnv, memEncoderPath.c_str(), m_memEncoderOptions);
-    #endif
+#endif
 
         // Gather node info for memory sessions
         m_memAttentionInputNodes  = getSessionNodes(m_memAttentionSession.get(), true);
@@ -253,8 +253,8 @@ bool SAM2::initializeVideo(const std::string &encoderPath,
 // --------------------
 std::variant<std::vector<Ort::Value>, std::string>
 SAM2::runSession(Ort::Session* session,
-                 const std::vector<Node> &inputNodes,
-                 const std::vector<Node> &outputNodes,
+                 const std::vector<SAM2Node> &inputNodes,
+                 const std::vector<SAM2Node> &outputNodes,
                  const std::vector<Ort::Value> &inputTensors,
                  const std::string &debugName)
 {
@@ -280,7 +280,7 @@ SAM2::runSession(Ort::Session* session,
             inputTensors.size(),
             outNames.data(),
             outNames.size()
-        );
+            );
         return outputs; // success => vector<Ort::Value>
     }
     catch(const std::exception &e){
@@ -334,13 +334,13 @@ SAM2::runMemEncoderSession(const std::vector<Ort::Value> &inputTensors)
 }
 
 
-std::vector<Node> SAM2::getSessionNodes(Ort::Session* session, bool isInput)
+std::vector<SAM2Node> SAM2::getSessionNodes(Ort::Session* session, bool isInput)
 {
-    std::vector<Node> nodes;
+    std::vector<SAM2Node> nodes;
     Ort::AllocatorWithDefaultOptions alloc;
     size_t count = isInput ? session->GetInputCount() : session->GetOutputCount();
     for(size_t i = 0; i < count; i++){
-        Node node;
+        SAM2Node node;
         auto namePtr = isInput ? session->GetInputNameAllocated(i, alloc)
                                : session->GetOutputNameAllocated(i, alloc);
         node.name = std::string(namePtr.get());

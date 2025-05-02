@@ -3,16 +3,16 @@
 #include <stdexcept>
 #include <iostream>
 #include <sstream>
-#include <cstring> // for memcpy
+#include <cstring>
 
 // --------------------
 // Single-frame usage
 // --------------------
-EncoderOutputs SAM2::getEncoderOutputsFromImage(const Image<float> &originalImage, Size targetImageSize) {
+EncoderOutputs SAM2::getEncoderOutputsFromImage(const Image<float> &originalImage, SAM2Size targetImageSize) {
     EncoderOutputs outputs;
-    
+
     Image<float> resizedImage = originalImage.resize(targetImageSize.width, targetImageSize.height);
-    
+
     // Extract image in planar format (all r values first, then g values then b values)
     // SAM2 apparently needs them in this order
     std::vector<float> encData = resizedImage.getDataPlanarFormat();
@@ -25,7 +25,7 @@ EncoderOutputs SAM2::getEncoderOutputsFromImage(const Image<float> &originalImag
 
     // Run the encoder.
     auto encRes = runImageEncoderSession(encInputs);
-    if(encRes.index() == 1) 
+    if(encRes.index() == 1)
         throw std::runtime_error(std::get<std::string>(encRes));
     outputs.outputs = std::move(std::get<0>(encRes));
 
@@ -52,18 +52,18 @@ std::vector<Ort::Value> SAM2::prepareDecoderInputs(
     int numPoints = static_cast<int>(promptLabels.size());
     std::vector<int64_t> shapeCoords = {1, numPoints, 2};
     std::vector<int64_t> shapeLabels = {1, numPoints};
-    
+
     // Create prompt coordinate tensor.
     inputs.push_back(createTensor<float>(m_memoryInfo, promptCoords, shapeCoords));
     // Create prompt label tensor.
     inputs.push_back(createTensor<float>(m_memoryInfo, promptLabels, shapeLabels));
     // Create primary feature tensor (encoder embed or fused feature).
     inputs.push_back(createTensor<float>(m_memoryInfo, primaryFeature, primaryFeatureShape));
-    
+
     // Instead of a range-for loop, use move iterators to move the additional inputs.
     inputs.insert(inputs.end(),
-        std::make_move_iterator(additionalInputs.begin()),
-        std::make_move_iterator(additionalInputs.end()));
+                  std::make_move_iterator(additionalInputs.begin()),
+                  std::make_move_iterator(additionalInputs.end()));
 
     return inputs;
 }
@@ -71,7 +71,7 @@ std::vector<Ort::Value> SAM2::prepareDecoderInputs(
 bool SAM2::preprocessImage(const Image<float> &originalImage)
 {
     try {
-        Size SAM2ImageSize = getInputSize();
+        SAM2Size SAM2ImageSize = getInputSize();
         EncoderOutputs encOut = getEncoderOutputsFromImage(originalImage, SAM2ImageSize);
 
         // Store the extracted outputs in the appropriate member variables.
@@ -90,7 +90,7 @@ bool SAM2::preprocessImage(const Image<float> &originalImage)
     }
 }
 
-Image<float> SAM2::inferSingleFrame(const Size &originalImageSize)
+Image<float> SAM2::inferSingleFrame(const SAM2Size &originalImageSize)
 {
     if(m_promptPointLabels.empty() || m_promptPointCoords.empty()){
         std::cerr << "[WARN] InferSingleFrame => no prompts.\n";
@@ -110,7 +110,7 @@ Image<float> SAM2::inferSingleFrame(const Size &originalImageSize)
         m_outputTensorValuesEncoder,
         m_outputShapeEncoder,
         std::move(additionalInputs)
-    );
+        );
 
     // Run the decoder
     auto decRes = runImageDecoderSession(decInputs);
@@ -132,12 +132,12 @@ Image<float> SAM2::inferSingleFrame(const Size &originalImageSize)
 // ------------------
 // Prompt and helpers
 // ------------------
-void SAM2::setPrompts(const Prompts &prompts, const Size &originalImageSize)
+void SAM2::setPrompts(const SAM2Prompts &prompts, const SAM2Size &originalImageSize)
 {
     m_promptPointCoords.clear();
     m_promptPointLabels.clear();
 
-    Size SAM2ImageSize = getInputSize();
+    SAM2Size SAM2ImageSize = getInputSize();
     if(SAM2ImageSize.width <= 0 || SAM2ImageSize.height <= 0){
         std::cerr << "[WARN] setPrompts => invalid encoder size.\n";
         return;
@@ -168,18 +168,18 @@ void SAM2::setPrompts(const Prompts &prompts, const Size &originalImageSize)
     }
 }
 
-void SAM2::setRectsLabels(const std::list<Rect> &rects,
+void SAM2::setRectsLabels(const std::list<SAM2Rect> &rects,
                           std::vector<float> *inputPointValues,
                           std::vector<float> *inputLabelValues)
 {
     for(const auto &rc : rects) {
-        float x1 = (float)rc.x; 
+        float x1 = (float)rc.x;
         float y1 = (float)rc.y;
         inputPointValues->push_back(x1);
         inputPointValues->push_back(y1);
         inputLabelValues->push_back(2.f);
 
-        float x2 = (float)rc.br().x; 
+        float x2 = (float)rc.br().x;
         float y2 = (float)rc.br().y;
         inputPointValues->push_back(x2);
         inputPointValues->push_back(y2);
@@ -187,7 +187,7 @@ void SAM2::setRectsLabels(const std::list<Rect> &rects,
     }
 }
 
-void SAM2::setPointsLabels(const std::list<Point> &points,
+void SAM2::setPointsLabels(const std::list<SAM2Point> &points,
                            int label,
                            std::vector<float> *inputPointValues,
                            std::vector<float> *inputLabelValues)
@@ -199,9 +199,9 @@ void SAM2::setPointsLabels(const std::list<Point> &points,
     }
 }
 
-Image<float> SAM2::createBinaryMask(const Size &targetSize, 
-                                    const Size &maskSize, 
-                                    float *maskData, 
+Image<float> SAM2::createBinaryMask(const SAM2Size &targetSize,
+                                    const SAM2Size &maskSize,
+                                    float *maskData,
                                     float threshold)
 {
     // Create an Image<float> for the low-resolution mask directly.
@@ -230,7 +230,7 @@ Image<float> SAM2::createBinaryMask(const Size &targetSize,
     return binaryMask;
 }
 
-Image<float> SAM2::extractAndCreateMask(Ort::Value &maskTensor, const Size &targetSize)
+Image<float> SAM2::extractAndCreateMask(Ort::Value &maskTensor, const SAM2Size &targetSize)
 {
     // Retrieve the raw float pointer from the tensor.
     float* maskData = maskTensor.GetTensorMutableData<float>();
@@ -249,5 +249,5 @@ Image<float> SAM2::extractAndCreateMask(Ort::Value &maskTensor, const Size &targ
     int maskW = static_cast<int>(maskShape[3]);
 
     // Call the existing helper to create a binary mask.
-    return createBinaryMask(targetSize, Size(maskW, maskH), maskData);
+    return createBinaryMask(targetSize, SAM2Size(maskW, maskH), maskData);
 }

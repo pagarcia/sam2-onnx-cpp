@@ -36,10 +36,10 @@ struct VideoAppState {
     SAM2* sam = nullptr;          // The SAM2 object
     cv::Mat firstFrame;           // Original BGR from the first frame
     cv::Mat displayFrame;         // Display with partial overlay
-    Size originalSize;        // e.g. 960×540
+    SAM2Size originalSize;        // e.g. 960×540
 
     // The user-chosen seeds in original coords
-    std::vector<Point> points;
+    std::vector<SAM2Point> points;
     std::vector<int> labels; // 1=FG, 0=BG
 };
 
@@ -68,7 +68,7 @@ static void updateFirstFrameDisplay(VideoAppState* st)
     }
 
     // Build a Prompts from the user’s seeds
-    Prompts prompts;
+    SAM2Prompts prompts;
     prompts.points      = st->points;
     prompts.pointLabels = st->labels;
 
@@ -120,7 +120,7 @@ static void onMouseFirstFrame(int event, int x, int y, int, void* userdata)
         if (x>=st->originalSize.width)  x=st->originalSize.width -1;
         if (y>=st->originalSize.height) y=st->originalSize.height-1;
 
-        st->points.push_back(Point(x,y));
+        st->points.push_back(SAM2Point(x,y));
         st->labels.push_back(fg?1:0);
 
         // Show partial
@@ -351,7 +351,7 @@ int runOnnxTestVideo(int argc, char** argv)
     std::cout<<"[INFO] Writing => "<< outVideo <<"\n";
 
     // Convert user seeds => final prompts
-    Prompts userPrompts;
+    SAM2Prompts userPrompts;
     userPrompts.points      = st.points;
     userPrompts.pointLabels = st.labels;
 
@@ -374,7 +374,7 @@ int runOnnxTestVideo(int argc, char** argv)
 
         // We must resize EVERY frame to inputSize => no mismatch
         // On frame0 => seeds, else empty
-        Prompts promptsToUse;
+        SAM2Prompts promptsToUse;
         if(frameIndex==0){
             promptsToUse= userPrompts;
             std::cout<<"[INFO] Frame0 => user seeds.\n";
