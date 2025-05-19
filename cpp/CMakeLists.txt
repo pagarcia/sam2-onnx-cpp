@@ -57,11 +57,10 @@ else()
   set(OPENFILEDIALOG_SRC "")
 endif()
 
-# Build only main.cpp, onnx_test_image.cpp, SAM2.cpp (plus openFileDialog).
+# Build files
 add_executable(${TARGET_NAME}
     src/main.cpp
     src/onnx_test_image.cpp
-    src/onnx_test_image_bounding_box.cpp
     src/onnx_test_video.cpp
     src/SAM2Session.cpp
     src/SAM2Image.cpp
