@@ -133,7 +133,8 @@ From `C:/Program Files/OpenCV/Release`:
 
 The compiled executable typically goes to `cpp/build_release/bin/Release`. For example, run:
 ```bash
-./Segment.exe --onnx_test_image
+./Segment.exe --onnx_test_image --prompt seed_points
+./Segment.exe --onnx_test_image --prompt bounding_box
 ./Segment.exe --onnx_test_video
 ```
 
