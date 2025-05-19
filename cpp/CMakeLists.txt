@@ -61,6 +61,7 @@ endif()
 add_executable(${TARGET_NAME}
     src/main.cpp
     src/onnx_test_image.cpp
+    src/onnx_test_image_bounding_box.cpp
     src/onnx_test_video.cpp
     src/SAM2Session.cpp
     src/SAM2Image.cpp

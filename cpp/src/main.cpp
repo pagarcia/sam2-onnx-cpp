@@ -4,6 +4,7 @@
 
 // Forward declarations
 int runOnnxTestImage(int argc, char** argv);
+int runOnnxTestImageBoundingBox(int argc, char** argv);
 int runOnnxTestVideo(int argc, char** argv);
 
 static void printMainUsage()
@@ -12,11 +13,12 @@ static void printMainUsage()
               << "[USAGE]\n"
               << "  Segment <mode> [options]\n\n"
               << "  Modes:\n"
-              << "    --onnx_test_image   => single-image interactive test\n"
-              << "    --onnx_test_video   => multi-frame video test\n"
+              << "    --onnx_test_image                => single-image interactive test\n"
+              << "    --onnx_test_image_bounding_box   => single-image bounding box interactive test\n"
+              << "    --onnx_test_video                => multi-frame video test\n"
               << "\n"
               << "Example usage for image mode:\n"
-              << "  Segment --onnx_test_image --encoder image_encoder.onnx --decoder image_decoder.onnx\n"
+              << "  Segment --onnx_test_image_bounding_box --encoder image_encoder.onnx --decoder image_decoder.onnx\n"
               << "           --image myimage.jpg\n\n"
               << "Example usage for video mode:\n"
               << "  Segment --onnx_test_video --encoder image_encoder.onnx --decoder image_decoder.onnx\n"
@@ -42,6 +44,10 @@ int main(int argc, char** argv)
     if (modeArg == "--onnx_test_image")
     {
         return runOnnxTestImage(argc, argv);
+    }
+        else if (modeArg == "--onnx_test_image_bounding_box")
+    {
+        return runOnnxTestImageBoundingBox(argc, argv);
     }
     else if (modeArg == "--onnx_test_video")
     {
