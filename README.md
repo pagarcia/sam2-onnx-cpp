@@ -200,8 +200,7 @@ Repeat for each file as needed.
 
 Test the exported ONNX models by running:
 ```bash
-python export/onnx_test_image_seed_points.py --model_size tiny
-python export/onnx_test_image_bounding_box.py --model_size tiny
+python export/onnx_test_image.py --prompt seed_points --model_size tiny
 python export/onnx_test_video_seed_points.py --model_size tiny
 python export/onnx_test_video_bounding_box.py --model_size tiny
 ```
