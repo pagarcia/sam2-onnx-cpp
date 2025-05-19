@@ -135,7 +135,8 @@ The compiled executable typically goes to `cpp/build_release/bin/Release`. For e
 ```bash
 ./Segment.exe --onnx_test_image --prompt seed_points
 ./Segment.exe --onnx_test_image --prompt bounding_box
-./Segment.exe --onnx_test_video
+./Segment.exe --onnx_test_video --prompt seed_points
+./Segment.exe --onnx_test_video --prompt bounding_box
 ```
 
 ## macOS Setup & Execution

@@ -1,407 +1,311 @@
-// onnx_test_video.cpp
+// ──────────────────────────────  onnx_test_video.cpp  ───────────────────────────
 #include <iostream>
 #include <string>
 #include <vector>
 #include <thread>
 #include <chrono>
 #include <opencv2/opencv.hpp>
-#include <onnxruntime_cxx_api.h> // for GetAvailableProviders()
+#include <onnxruntime_cxx_api.h>
 #include "SAM2.h"
 #include "openFileDialog.h"
 #include "CVHelpers.h"
 
-// A small helper to print usage
-static void printVideoUsage(const char* argv0)
+/* ════════════════════════════════════════════════════════════════════════════ *
+ *                          0.  COMMON HELPERS                                  *
+ * ════════════════════════════════════════════════════════════════════════════ */
+enum class PromptMode { SEED_POINTS, BOUNDING_BOX };
+
+static cv::Mat overlayMask(const cv::Mat& img, const cv::Mat& maskGray)
 {
-    std::cout << "\nUsage:\n"
-              << "  " << argv0
-              << " --onnx_test_video"
-              << " [--encoder <image_encoder.onnx>]"
-              << " [--decoder <image_decoder.onnx>]"
-              << " [--memattn <memory_attention.onnx>]"
-              << " [--memenc  <memory_encoder.onnx>]"
-              << " [--video <myvideo.mkv>]"
-              << " [--threads <N>]"
-              << " [--max_frames <N>]\n\n"
-              << "Notes:\n"
-              << "  * If --video is not specified, a file dialog opens.\n"
-              << "  * GPU if CUDA is available, otherwise CPU.\n"
-              << "  * On first frame, user can place seeds (L=FG, R=BG, M=reset). Press ENTER to finalize.\n"
-              << "  * Then the entire video is segmented with those seeds as memory.\n"
-              << std::endl;
-}
-
-// We'll store interactive seeds for the first frame
-struct VideoAppState {
-    SAM2* sam = nullptr;          // The SAM2 object
-    cv::Mat firstFrame;           // Original BGR from the first frame
-    cv::Mat displayFrame;         // Display with partial overlay
-    SAM2Size originalSize;        // e.g. 960×540
-
-    // The user-chosen seeds in original coords
-    std::vector<SAM2Point> points;
-    std::vector<int> labels; // 1=FG, 0=BG
-};
-
-// Overlays a binary mask in green
-static cv::Mat overlayMask(const cv::Mat &bgr, const cv::Mat &maskGray)
-{
-    cv::Mat overlay;
-    bgr.copyTo(overlay);
-    cv::Mat green(bgr.size(), bgr.type(), cv::Scalar(0,255,0));
-    green.copyTo(overlay, maskGray);
-
+    cv::Mat overlay;  img.copyTo(overlay);
+    cv::Mat green(img.size(), img.type(), cv::Scalar(0,255,0));
+    green.copyTo(overlay, maskGray);                     // only where mask!=0
     cv::Mat blended;
-    cv::addWeighted(bgr, 0.7, overlay, 0.3, 0, blended);
+    cv::addWeighted(img, 0.7, overlay, 0.3, 0, blended);
     return blended;
 }
 
-// Each time the user adds seeds on the first frame, we re-run single-frame inference
-//   => partial mask overlay
-static void updateFirstFrameDisplay(VideoAppState* st)
+/* ════════════════════════════════════════════════════════════════════════════ *
+ *                       1.  INTERACTIVE FIRST-FRAME                            *
+ * ════════════════════════════════════════════════════════════════════════════ */
+struct VideoAppState
 {
-    // If no seeds, show plain
-    if (st->points.empty()) {
-        st->firstFrame.copyTo(st->displayFrame);
-        cv::imshow("First Frame - Interactive", st->displayFrame);
-        return;
+    SAM2*  sam = nullptr;
+
+    cv::Mat firstFrame;          // BGR
+    cv::Mat displayFrame;        // what the user sees
+    SAM2Size originalSize;       // W×H of original frame
+
+    PromptMode mode = PromptMode::SEED_POINTS;
+
+    /* Seed-point prompt ---------------------------------------------------- */
+    std::vector<SAM2Point> points;
+    std::vector<int>       labels;      // 1=FG, 0=BG
+    void resetSeeds() { points.clear(); labels.clear(); }
+
+    /* Bounding-box prompt -------------------------------------------------- */
+    bool     drawing      = false;
+    bool     hasRect      = false;
+    SAM2Rect rect;                  // x,y,w,h  — w/h may be negative
+    void resetRect() { drawing=false; hasRect=false; rect=SAM2Rect(); }
+};
+
+/* Re-runs decoder each time the user edits the first-frame prompt. */
+static void updateFirstFrameDisplay(VideoAppState* st, bool forceRunBBox=false)
+{
+    st->displayFrame = st->firstFrame.clone();
+
+    /* draw current rectangle (bbox mode) */
+    if (st->mode==PromptMode::BOUNDING_BOX && (st->drawing || st->hasRect))
+    {
+        SAM2Rect r = st->rect;
+        if (r.width <0){ r.x+=r.width;  r.width =-r.width;  }
+        if (r.height<0){ r.y+=r.height; r.height=-r.height; }
+        cv::rectangle(st->displayFrame,
+                      cv::Rect(r.x,r.y,r.width,r.height),
+                      cv::Scalar(0,255,255), 2);
     }
 
-    // Build a Prompts from the user’s seeds
-    SAM2Prompts prompts;
-    prompts.points      = st->points;
-    prompts.pointLabels = st->labels;
+    /* decide if we need a segmentation run */
+    bool needRun=false;
+    if (st->mode==PromptMode::SEED_POINTS)
+        needRun = !st->points.empty();
+    else
+        needRun = forceRunBBox && st->hasRect;
 
-    // Let SAM know about them
-    st->sam->setPrompts(prompts, st->originalSize);
+    if (needRun)
+    {
+        SAM2Prompts p;
+        if (st->mode==PromptMode::SEED_POINTS)
+        {
+            p.points      = st->points;
+            p.pointLabels = st->labels;
+        }
+        else
+            p.rects.push_back(st->rect);
 
-    // Call single-frame => upsample => overlay
-    auto t0 = std::chrono::high_resolution_clock::now();
-    Image<float> mask = st->sam->inferSingleFrame(st->originalSize);
-    auto t1 = std::chrono::high_resolution_clock::now();
-    double ms = std::chrono::duration<double,std::milli>(t1 - t0).count();
-    std::cout << "[INFO] Partial decode => " << ms << " ms\n";
+        st->sam->setPrompts(p, st->originalSize);
 
-    cv::Mat overlayed = overlayMask(st->firstFrame, CVHelpers::imageToCvMatWithType(mask, CV_8UC1, 255.0));
+        auto t0 = std::chrono::high_resolution_clock::now();
+        Image<float> mask = st->sam->inferSingleFrame(st->originalSize);
+        double ms = std::chrono::duration<double,std::milli>(
+                        std::chrono::high_resolution_clock::now()-t0).count();
+        std::cout << "[INFO] Partial decode => " << ms << " ms\n";
 
-    // Draw seeds => FG=red, BG=blue
-    for (size_t i=0; i<st->points.size(); i++) {
-        cv::Scalar color = (st->labels[i]==1)
-                           ? cv::Scalar(0,0,255)
-                           : cv::Scalar(255,0,0);
-        cv::circle(overlayed, cv::Point(st->points[i].x, st->points[i].y), 5, color, -1);
+        st->displayFrame = overlayMask(
+            st->displayFrame,
+            CVHelpers::imageToCvMatWithType(mask, CV_8UC1, 255.0) );
     }
 
-    overlayed.copyTo(st->displayFrame);
+    /* draw point seeds on top */
+    if (st->mode==PromptMode::SEED_POINTS)
+    {
+        for (size_t i=0;i<st->points.size();++i)
+        {
+            cv::Scalar col = (st->labels[i]==1)? cv::Scalar(0,0,255)
+                                               : cv::Scalar(255,0,0);
+            cv::circle(st->displayFrame,
+                       cv::Point(st->points[i].x, st->points[i].y),
+                       5, col, -1);
+        }
+    }
+
     cv::imshow("First Frame - Interactive", st->displayFrame);
 }
 
-// Mouse callback => L=FG, R=BG, M=reset
-static void onMouseFirstFrame(int event, int x, int y, int, void* userdata)
+/* unified mouse callback for both prompt types */
+static void onMouseFirstFrame(int ev,int x,int y,int,void* userdata)
 {
-    auto st = reinterpret_cast<VideoAppState*>(userdata);
+    auto st = static_cast<VideoAppState*>(userdata);
 
-    if (event == cv::EVENT_MBUTTONDOWN) {
-        std::cout << "[INFO] Reset seeds.\n";
-        st->points.clear();
-        st->labels.clear();
+    /* ────────────── SEED-POINTS MODE ────────────── */
+    if (st->mode==PromptMode::SEED_POINTS)
+    {
+        if (ev==cv::EVENT_MBUTTONDOWN) { st->resetSeeds(); updateFirstFrameDisplay(st); return;}
+        if (ev!=cv::EVENT_LBUTTONDOWN && ev!=cv::EVENT_RBUTTONDOWN) return;
+
+        bool fg = (ev==cv::EVENT_LBUTTONDOWN);
+        st->points.emplace_back(x,y);
+        st->labels.push_back(fg?1:0);
         updateFirstFrameDisplay(st);
         return;
     }
 
-    if (event==cv::EVENT_LBUTTONDOWN || event==cv::EVENT_RBUTTONDOWN) {
-        bool fg = (event==cv::EVENT_LBUTTONDOWN);
-        std::cout << "[INFO] " << (fg?"Foreground":"Background")
-                  << " => ("<< x <<","<< y <<")\n";
+    /* ────────────── BOUNDING-BOX MODE ───────────── */
+    if (st->mode==PromptMode::BOUNDING_BOX)
+    {
+        if (ev==cv::EVENT_RBUTTONDOWN || ev==cv::EVENT_MBUTTONDOWN)
+        { st->resetRect(); updateFirstFrameDisplay(st); return; }
 
-        // clamp if out of range
-        if (x<0) x=0;
-        if (y<0) y=0;
-        if (x>=st->originalSize.width)  x=st->originalSize.width -1;
-        if (y>=st->originalSize.height) y=st->originalSize.height-1;
-
-        st->points.push_back(SAM2Point(x,y));
-        st->labels.push_back(fg?1:0);
-
-        // Show partial
-        updateFirstFrameDisplay(st);
+        if (ev==cv::EVENT_LBUTTONDOWN)
+        {
+            st->drawing=true; st->hasRect=false;
+            st->rect.x=x; st->rect.y=y; st->rect.width=st->rect.height=0;
+            updateFirstFrameDisplay(st);
+        }
+        else if (ev==cv::EVENT_MOUSEMOVE && st->drawing)
+        {
+            st->rect.width  = x - st->rect.x;
+            st->rect.height = y - st->rect.y;
+            updateFirstFrameDisplay(st);
+        }
+        else if (ev==cv::EVENT_LBUTTONUP && st->drawing)
+        {
+            st->drawing=false; st->hasRect=true;
+            st->rect.width  = x - st->rect.x;
+            st->rect.height = y - st->rect.y;
+            updateFirstFrameDisplay(st, /*forceRunBBox=*/true);
+        }
     }
 }
 
-/** The main function for runOnnxTestVideo(...) */
-int runOnnxTestVideo(int argc, char** argv)
+/* ════════════════════════════════════════════════════════════════════════════ *
+ *                               2.  MAIN RUNNER                                *
+ * ════════════════════════════════════════════════════════════════════════════ */
+static void printVideoUsage(const char* argv0)
 {
-    // ------------------------------------------------------------------
-    // 1) Parse CLI
-    // ------------------------------------------------------------------
-    std::string encoderPath     = "image_encoder.onnx";
-    std::string decoderPath     = "image_decoder.onnx";
-    std::string memAttentionPath= "memory_attention.onnx";
-    std::string memEncoderPath  = "memory_encoder.onnx";
-    std::string videoPath; // empty => file dialog
-    int maxFrames = 0;
+    std::cout <<
+"Usage:  " << argv0 << " --onnx_test_video [options]\n\n"
+"Options:\n"
+"  --encoder   image_encoder.onnx\n"
+"  --decoder   image_decoder.onnx\n"
+"  --memattn   memory_attention.onnx\n"
+"  --memenc    memory_encoder.onnx\n"
+"  --video     clip.mkv / clip.mp4 (file-dialog if omitted)\n"
+"  --threads   N             (#CPU threads)\n"
+"  --max_frames N            (early stop)\n"
+"  --prompt   seed_points | bounding_box   (default: seed_points)\n\n"
+"Interactive first frame:\n"
+"  seed_points:  L-click=FG   R-click=BG   M-click=reset\n"
+"  bounding_box: L-drag box   R/M-click=reset\n"
+"  ENTER = confirm prompt   •   ESC = skip prompt\n"
+          << std::endl;
+}
 
-    int threads = (int)std::thread::hardware_concurrency();
-    if (threads<=0) threads=4;
+int runOnnxTestVideo(int argc,char** argv)
+{
+    /* ───── 1) CLI - defaults & parse ───── */
+    std::string encPath="image_encoder.onnx", decPath="image_decoder.onnx";
+    std::string memAttnPath="memory_attention.onnx", memEncPath="memory_encoder.onnx";
+    std::string videoPath;
+    int   threads = (int)std::thread::hardware_concurrency(); if(threads<=0) threads=4;
+    int   maxFrames=0;
+    PromptMode promptMode = PromptMode::SEED_POINTS;
 
-    for(int i=1;i<argc;i++){
-        std::string arg=argv[i];
-        if((arg=="--encoder") && i+1<argc) encoderPath=argv[++i];
-        else if((arg=="--decoder") && i+1<argc) decoderPath=argv[++i];
-        else if((arg=="--memattn") && i+1<argc) memAttentionPath=argv[++i];
-        else if((arg=="--memenc")  && i+1<argc) memEncoderPath=argv[++i];
-        else if((arg=="--video")   && i+1<argc) videoPath=argv[++i];
-        else if((arg=="--threads") && i+1<argc) threads= std::stoi(argv[++i]);
-        else if((arg=="--max_frames") && i+1<argc) maxFrames= std::stoi(argv[++i]);
-        else if((arg=="--help")||(arg=="-h")){
-            printVideoUsage(argv[0]);
-            return 0;
-        }
-    }
-
-    // If no --video => open file dialog
-    if (videoPath.empty()) {
-        std::cout << "[INFO] No video => opening file dialog...\n";
-        const wchar_t* filter = L"Video Files\0*.mp4;*.mkv;*.avi;*.mov\0All Files\0*.*\0";
-        const wchar_t* title  = L"Select a Video File";
-        std::string chosen = openFileDialog(filter, title);
-        if (chosen.empty()) {
-            std::cerr << "[ERROR] No file selected => aborting.\n";
-            return 1; // or an appropriate exit code
-        } else {
-            videoPath = chosen;
-        }
-    }    
-
-    // ------------------------------------------------------------------
-    // 2) Print all providers
-    // ------------------------------------------------------------------
+    for(int i=1;i<argc;++i)             // argv[0] = program, argv[1] = --onnx_test_video
     {
-        auto allProviders = Ort::GetAvailableProviders();
-        std::cout<<"[INFO] ONNX Runtime providers:\n";
-        for (auto &p:allProviders){
-            std::cout<<"       "<<p<<"\n";
+        std::string a=argv[i];
+        if((a=="--encoder")  && i+1<argc) encPath     = argv[++i];
+        else if((a=="--decoder") && i+1<argc) decPath = argv[++i];
+        else if((a=="--memattn") && i+1<argc) memAttnPath=argv[++i];
+        else if((a=="--memenc")  && i+1<argc) memEncPath =argv[++i];
+        else if((a=="--video")   && i+1<argc) videoPath  =argv[++i];
+        else if((a=="--threads") && i+1<argc) threads    =std::stoi(argv[++i]);
+        else if((a=="--max_frames")&&i+1<argc) maxFrames =std::stoi(argv[++i]);
+        else if((a=="--prompt")&&i+1<argc){
+            std::string s=argv[++i];
+            if      (s=="seed_points")  promptMode=PromptMode::SEED_POINTS;
+            else if (s=="bounding_box") promptMode=PromptMode::BOUNDING_BOX;
+            else { std::cerr<<"[ERROR] --prompt must be seed_points|bounding_box\n"; return 1; }
         }
-        std::cout<<std::endl;
+        else if(a=="--help"||a=="-h"){ printVideoUsage(argv[0]); return 0; }
     }
 
-    // Summarize
-    std::cout<<"[INFO] Using:\n"
-             <<"   encoder       = "<<encoderPath<<"\n"
-             <<"   decoder       = "<<decoderPath<<"\n"
-             <<"   memAttention  = "<<memAttentionPath<<"\n"
-             <<"   memEncoder    = "<<memEncoderPath<<"\n"
-             <<"   video         = "<<videoPath<<"\n"
-             <<"   max_frames    = "<<maxFrames<<"\n"
-             <<"   threads       = "<<threads<<"\n\n";
-
-    // ------------------------------------------------------------------
-    // 3) Attempt GPU => fallback CPU
-    // ------------------------------------------------------------------
-    bool cudaAvailable=false;
+    /* ───── 2) select video if none given ───── */
+    if(videoPath.empty())
     {
-        auto allProviders= Ort::GetAvailableProviders();
-        for (auto &p: allProviders){
-            if(p=="CUDAExecutionProvider"){
-                cudaAvailable=true; break;
-            }
-        }
+        const wchar_t* filt=L"Video\0*.mp4;*.mkv;*.avi;*.mov\0All\0*.*\0";
+        std::string chosen=openFileDialog(filt,L"Select a Video");
+        if(chosen.empty()){ std::cerr<<"[ERROR] No file chosen\n"; return 1;}
+        videoPath=chosen;
     }
 
+    /* ───── 3) print summary ───── */
+    std::cout<<"[INFO] encoder    = "<<encPath<<"\n"
+             <<"       decoder    = "<<decPath<<"\n"
+             <<"       memAttn    = "<<memAttnPath<<"\n"
+             <<"       memEnc     = "<<memEncPath<<"\n"
+             <<"       video      = "<<videoPath<<"\n"
+             <<"       prompt     = "<<(promptMode==PromptMode::SEED_POINTS?"seed_points":"bounding_box")<<"\n"
+             <<"       threads    = "<<threads<<"\n\n";
+
+    /* ───── 4) init SAM2 (GPU if possible) ───── */
+    bool cuda=false; for(auto&p:Ort::GetAvailableProviders()) if(p=="CUDAExecutionProvider") cuda=true;
+    std::string device = cuda? "cuda:0":"cpu";
     SAM2 sam;
-    bool initOk=false, usedGPU=false;
-    if(cudaAvailable){
-        std::cout<<"[INFO] Attempting GPU => cuda:0\n";
-        try {
-            if(sam.initializeVideo(encoderPath, decoderPath,
-                                   memAttentionPath, memEncoderPath,
-                                   threads, "cuda:0"))
-            {
-                std::cout<<"[INFO] GPU session ok.\n";
-                initOk=true; usedGPU=true;
-            } else {
-                std::cout<<"[WARN] GPU returned false => CPU.\n";
-            }
-        }
-        catch(const std::exception &e){
-            std::cout<<"[WARN] GPU init ex => "<< e.what()<<"\n";
-        }
-    }
-    if(!initOk){
-        std::cout<<"[INFO] Using CPU...\n";
-        if(!sam.initializeVideo(encoderPath, decoderPath,
-                                memAttentionPath, memEncoderPath,
-                                threads, "cpu"))
-        {
-            std::cerr<<"[ERROR] CPU init failed.\n";
-            return 1;
-        }
-        usedGPU=false; initOk=true;
-    }
-    if(usedGPU) std::cout<<"[INFO] *** GPU inference ***\n";
-    else        std::cout<<"[INFO] *** CPU inference ***\n";
+    if(!sam.initializeVideo(encPath,decPath,memAttnPath,memEncPath,threads,device))
+    { std::cerr<<"[ERROR] SAM2 init failed\n"; return 1;}
 
-    // ------------------------------------------------------------------
-    // 4) Open the video => read the first frame => interactive seeds
-    // ------------------------------------------------------------------
+    /* ───── 5) open video & grab first frame ───── */
     cv::VideoCapture cap(videoPath);
-    if(!cap.isOpened()){
-        std::cerr<<"[ERROR] Could not open video => "<<videoPath<<"\n";
-        return 1;
-    }
-    double fps = cap.get(cv::CAP_PROP_FPS);
-    int width  = (int)cap.get(cv::CAP_PROP_FRAME_WIDTH);
-    int height = (int)cap.get(cv::CAP_PROP_FRAME_HEIGHT);
-    int totalF = (int)cap.get(cv::CAP_PROP_FRAME_COUNT);
-    std::cout<<"[INFO] "<<videoPath<<" => "
-             <<width<<"x"<<height
-             <<", fps="<<fps
-             <<", frames="<<totalF<<"\n\n";
+    if(!cap.isOpened()){ std::cerr<<"[ERROR] Cannot open video\n"; return 1; }
 
     cv::Mat firstFrameBGR;
-    if(!cap.read(firstFrameBGR)){
-        std::cerr<<"[ERROR] Could not read first frame.\n";
-        return 1;
-    }
+    if(!cap.read(firstFrameBGR)){ std::cerr<<"[ERROR] Cannot read first frame\n"; return 1;}
 
-    // We'll do single-frame approach => user seeds => partial decode
-    //   i.e. call sam.preprocessImage(...) + sam.InferSingleFrame(...)
     VideoAppState st;
-    st.sam=&sam;
-    firstFrameBGR.copyTo(st.firstFrame);
-    st.originalSize.width = st.firstFrame.size().width;
-    st.originalSize.height = st.firstFrame.size().height;
+    st.sam = &sam;
+    st.firstFrame = firstFrameBGR;
+    st.originalSize = SAM2Size(firstFrameBGR.cols, firstFrameBGR.rows);
+    st.mode = promptMode;
 
-    // Preprocess the first frame => single-frame usage
-    auto preT0=std::chrono::steady_clock::now();
-    if(!sam.preprocessImage(CVHelpers::normalizeRGB(firstFrameBGR))){
-        std::cerr<<"[ERROR] preprocessImage failed.\n";
-        return 1;
-    }
-    auto preT1=std::chrono::steady_clock::now();
-    double preMs= std::chrono::duration<double,std::milli>(preT1-preT0).count();
-    std::cout<<"[INFO] first-frame preprocess => "<< preMs <<" ms\n";
+    /* preprocess encoder once */
+    sam.preprocessImage(CVHelpers::normalizeRGB(firstFrameBGR));
 
-    st.firstFrame.copyTo(st.displayFrame);
-
-    // interactive window => user seeds
+    /* interactive window */
+    st.displayFrame = st.firstFrame.clone();
     cv::namedWindow("First Frame - Interactive", cv::WINDOW_AUTOSIZE);
-    cv::imshow("First Frame - Interactive", st.displayFrame);
+    cv::imshow ("First Frame - Interactive", st.displayFrame);
     cv::setMouseCallback("First Frame - Interactive", onMouseFirstFrame, &st);
 
-    std::cout<<"[INFO] Place seeds on first frame => L=FG, R=BG, M=reset.\n"
-             <<"       Press ENTER to finalize, or ESC => no seeds.\n";
+    std::cout<<"\n[INFO] "<<(promptMode==PromptMode::SEED_POINTS?"Seed-point":"Bounding-box")
+             <<" mode.  Add prompt on first frame, then press ENTER (ESC = skip).\n";
 
-    while(true){
-        int key = cv::waitKey(50)&0xFF;
-        if(key==13||key==10){ // ENTER
-            std::cout<<"[INFO] user pressed ENTER => finalize seeds.\n";
-            break;
-        }
-        if(key==27){ // ESC
-            std::cout<<"[INFO] user pressed ESC => clearing seeds.\n";
-            st.points.clear();
-            st.labels.clear();
-            break;
+    while(true)
+    {
+        int k=cv::waitKey(50)&0xFF;
+        if(k==13||k==10) break;   // ENTER
+        if(k==27){                // ESC
+            st.resetSeeds(); st.resetRect(); break;
         }
     }
     cv::destroyAllWindows();
 
-    // Now we do a multi-frame pass => memory pipeline
-    //   frame0 => user seeds => memory
-    //   subsequent => empty => memory tracking
-    cap.set(cv::CAP_PROP_POS_FRAMES, 0);
-
-    // Output .avi => e.g. "myvideo_mask_overlay.avi"
-    // 1) First, extract the directory from videoPath
-    std::string inputDir;
+    /* assemble final prompts for frame-0 */
+    SAM2Prompts firstPrompts;
+    if(promptMode==PromptMode::SEED_POINTS)
     {
-        size_t slashPos = videoPath.find_last_of("/\\");
-        if (slashPos == std::string::npos) {
-            // No slash found => the video is in the current directory
-            inputDir = ".";
-        } else {
-            // Extract everything up to (but not including) the slash
-            inputDir = videoPath.substr(0, slashPos);
-        }
+        firstPrompts.points      = st.points;
+        firstPrompts.pointLabels = st.labels;
     }
+    else if(st.hasRect)
+        firstPrompts.rects.push_back(st.rect);
 
-    // 2) Then, extract the filename stem (no directory, no extension)
-    std::string baseName = videoPath;
+    /* ───── 6) MAIN LOOP (memory pipeline) ───── */
+    cap.set(cv::CAP_PROP_POS_FRAMES,0);
+
+    std::string outVideo = videoPath.substr(0, videoPath.find_last_of('.')) + "_mask_overlay.avi";
+    int fourcc=cv::VideoWriter::fourcc('M','J','P','G');
+    double fps=cap.get(cv::CAP_PROP_FPS);
+    cv::VideoWriter writer(outVideo,fourcc,fps,firstFrameBGR.size());
+    if(!writer.isOpened()){ std::cerr<<"[ERROR] writer\n"; return 1;}
+
+    int frameIdx=0;
+    while(true)
     {
-        size_t pos = baseName.find_last_of("/\\");
-        if(pos != std::string::npos) {
-            baseName = baseName.substr(pos+1); // remove any leading path
-        }
-        pos = baseName.find_last_of('.');
-        if(pos != std::string::npos) {
-            baseName = baseName.substr(0, pos); // remove extension
-        }
+        if(maxFrames>0 && frameIdx>=maxFrames) break;
+        cv::Mat frameBGR; cap>>frameBGR; if(frameBGR.empty()) break;
+
+        SAM2Prompts p = (frameIdx==0)? firstPrompts : SAM2Prompts{};
+        Image<float> mask = sam.inferMultiFrame(
+            CVHelpers::normalizeRGB(frameBGR), p );
+
+        cv::Mat overlay = overlayMask(
+            frameBGR, CVHelpers::imageToCvMatWithType(mask, CV_8UC1, 255.0) );
+
+        writer<<overlay;
+        std::cout<<"[INFO] Frame "<<frameIdx++<<" done\r"<<std::flush;
     }
-
-    // 3) Finally, combine them, ensuring we put the output in inputDir
-    std::string outVideo = inputDir + "/" + baseName + "_mask_overlay.avi";
-
-    int fourcc= cv::VideoWriter::fourcc('M','J','P','G');
-    cv::VideoWriter writer(outVideo, fourcc, fps, cv::Size(width,height));
-    if(!writer.isOpened()){
-        std::cerr<<"[ERROR] Could not open writer => "<<outVideo<<"\n";
-        return 1;
-    }
-    std::cout<<"[INFO] Writing => "<< outVideo <<"\n";
-
-    // Convert user seeds => final prompts
-    SAM2Prompts userPrompts;
-    userPrompts.points      = st.points;
-    userPrompts.pointLabels = st.labels;
-
-    auto globalStart=std::chrono::steady_clock::now();
-    int frameIndex=0;
-
-    while(true){
-        if(maxFrames>0 && frameIndex>=maxFrames){
-            std::cout<<"[INFO] Reached max_frames="<<maxFrames<<".\n";
-            break;
-        }
-        cv::Mat frameBGR;
-        cap >> frameBGR;
-        if(frameBGR.empty()){
-            std::cout<<"[INFO] End of video.\n";
-            break;
-        }
-
-        auto t0=std::chrono::steady_clock::now();
-
-        // We must resize EVERY frame to inputSize => no mismatch
-        // On frame0 => seeds, else empty
-        SAM2Prompts promptsToUse;
-        if(frameIndex==0){
-            promptsToUse= userPrompts;
-            std::cout<<"[INFO] Frame0 => user seeds.\n";
-        }
-
-        Image<float> mask= st.sam->inferMultiFrame(CVHelpers::normalizeRGB(frameBGR), promptsToUse);
-        auto t1= std::chrono::steady_clock::now();
-        double ms= std::chrono::duration<double,std::milli>(t1-t0).count();
-        std::cout<<"[INFO] Frame "<<frameIndex<<" => "<< ms <<" ms\n";
-
-        // Use the same green overlay approach as the interactive frame
-        cv::Mat overlayed = overlayMask(frameBGR, CVHelpers::imageToCvMatWithType(mask, CV_8UC1, 255.0));
-
-        // Write the final overlay
-        writer << overlayed;
-
-        frameIndex++;
-    }
-
-    writer.release();
-    cap.release();
-
-    auto globalEnd= std::chrono::steady_clock::now();
-    double totalMs= std::chrono::duration<double,std::milli>(globalEnd-globalStart).count();
-    std::cout<<"[INFO] Wrote "<< frameIndex <<" frames => "<< outVideo <<"\n"
-             <<"       total "<< totalMs <<" ms => "
-             << (totalMs/frameIndex) <<" ms/frame => "
-             << (1000.0/(totalMs/frameIndex)) <<" FPS\n";
+    std::cout<<"\n[INFO] Saved "<<outVideo<<"\n";
     return 0;
 }
