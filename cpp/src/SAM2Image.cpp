@@ -132,39 +132,58 @@ Image<float> SAM2::inferSingleFrame(const SAM2Size &originalImageSize)
 // ------------------
 // Prompt and helpers
 // ------------------
-void SAM2::setPrompts(const SAM2Prompts &prompts, const SAM2Size &originalImageSize)
+void SAM2::setPrompts(const SAM2Prompts &prompts,
+                      const SAM2Size    &originalImageSize)
 {
+    // ── clear previous prompt buffers ─────────────────────────────
     m_promptPointCoords.clear();
     m_promptPointLabels.clear();
 
-    SAM2Size SAM2ImageSize = getInputSize();
-    if(SAM2ImageSize.width <= 0 || SAM2ImageSize.height <= 0){
+    // encoder input size in pixels (e.g. 1024×1024)
+    SAM2Size encSize = getInputSize();
+    if (encSize.width <= 0 || encSize.height <= 0) {
         std::cerr << "[WARN] setPrompts => invalid encoder size.\n";
         return;
     }
 
-    // Rect => label=2,3
-    for(const auto &rc : prompts.rects){
-        float x1 = rc.x * (float)SAM2ImageSize.width / (float)originalImageSize.width;
-        float y1 = rc.y * (float)SAM2ImageSize.height / (float)originalImageSize.height;
+    /*───────────────────────────────────────────────────────────────
+      1.  Rectangles  →  two corner points  (labels 2 & 3)
+    ───────────────────────────────────────────────────────────────*/
+    for (const auto &rcRaw : prompts.rects)
+    {
+        // make a mutable copy so we can normalise it
+        SAM2Rect rc = rcRaw;
+
+        // normalise: ensure (x,y) is top-left; width/height positive
+        if (rc.width  < 0) { rc.x += rc.width;  rc.width  = -rc.width; }
+        if (rc.height < 0) { rc.y += rc.height; rc.height = -rc.height; }
+
+        // scale TL corner → encoder space, push with label 2
+        float x1 = rc.x *  (float)encSize.width  / originalImageSize.width;
+        float y1 = rc.y *  (float)encSize.height / originalImageSize.height;
         m_promptPointCoords.push_back(x1);
         m_promptPointCoords.push_back(y1);
-        m_promptPointLabels.push_back(2.f);
+        m_promptPointLabels.push_back(2.f);                 // label-2 (TL)
 
-        float x2 = rc.br().x * (float)SAM2ImageSize.width / (float)originalImageSize.width;
-        float y2 = rc.br().y * (float)SAM2ImageSize.height / (float)originalImageSize.height;
+        // scale BR corner → encoder space, push with label 3
+        float x2 = (rc.x + rc.width)  * (float)encSize.width  / originalImageSize.width;
+        float y2 = (rc.y + rc.height) * (float)encSize.height / originalImageSize.height;
         m_promptPointCoords.push_back(x2);
         m_promptPointCoords.push_back(y2);
-        m_promptPointLabels.push_back(3.f);
+        m_promptPointLabels.push_back(3.f);                 // label-3 (BR)
     }
 
-    // Points => label=1,0,etc.
-    for(size_t i=0; i<prompts.points.size(); i++){
-        float x = prompts.points[i].x * (float)SAM2ImageSize.width / (float)originalImageSize.width;
-        float y = prompts.points[i].y * (float)SAM2ImageSize.height/ (float)originalImageSize.height;
+    /*───────────────────────────────────────────────────────────────
+      2.  Individual points (seed clicks)
+          label: 1 = positive (FG), 0 = negative (BG)
+    ───────────────────────────────────────────────────────────────*/
+    for (size_t i = 0; i < prompts.points.size(); ++i)
+    {
+        float x = prompts.points[i].x * (float)encSize.width  / originalImageSize.width;
+        float y = prompts.points[i].y * (float)encSize.height / originalImageSize.height;
         m_promptPointCoords.push_back(x);
         m_promptPointCoords.push_back(y);
-        m_promptPointLabels.push_back((float)prompts.pointLabels[i]);
+        m_promptPointLabels.push_back((float)prompts.pointLabels[i]);   // 0 or 1
     }
 }
 

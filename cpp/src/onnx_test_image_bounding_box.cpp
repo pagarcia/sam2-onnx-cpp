@@ -14,7 +14,6 @@ using namespace std;
 using namespace std::chrono;
 
 /*────────────────────────── small helpers ──────────────────────────*/
-/*────────────────────────── small helpers ──────────────────────────*/
 // Replace the current overlayMask with this:
 static cv::Mat overlayMask(const cv::Mat& img, const cv::Mat& mask)
 {
