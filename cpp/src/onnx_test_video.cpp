@@ -165,20 +165,20 @@ static void onMouseFirstFrame(int ev,int x,int y,int,void* userdata)
 static void printVideoUsage(const char* argv0)
 {
     std::cout <<
-"Usage:  " << argv0 << " --onnx_test_video [options]\n\n"
-"Options:\n"
-"  --encoder   image_encoder.onnx\n"
-"  --decoder   image_decoder.onnx\n"
-"  --memattn   memory_attention.onnx\n"
-"  --memenc    memory_encoder.onnx\n"
-"  --video     clip.mkv / clip.mp4 (file-dialog if omitted)\n"
-"  --threads   N             (#CPU threads)\n"
-"  --max_frames N            (early stop)\n"
-"  --prompt   seed_points | bounding_box   (default: seed_points)\n\n"
-"Interactive first frame:\n"
-"  seed_points:  L-click=FG   R-click=BG   M-click=reset\n"
-"  bounding_box: L-drag box   R/M-click=reset\n"
-"  ENTER = confirm prompt   •   ESC = skip prompt\n"
+    "Usage:  " << argv0 << " --onnx_test_video [options]\n\n"
+    "Options:\n"
+    "  --encoder   image_encoder.onnx\n"
+    "  --decoder   image_decoder.onnx\n"
+    "  --memattn   memory_attention.onnx\n"
+    "  --memenc    memory_encoder.onnx\n"
+    "  --video     clip.mkv / clip.mp4 (file-dialog if omitted)\n"
+    "  --threads   N             (#CPU threads)\n"
+    "  --max_frames N            (early stop)\n"
+    "  --prompt   seed_points | bounding_box   (default: seed_points)\n\n"
+    "Interactive first frame:\n"
+    "  seed_points:  L-click=FG   R-click=BG   M-click=reset\n"
+    "  bounding_box: L-drag box   R/M-click=reset\n"
+    "  ENTER = confirm prompt   •   ESC = skip prompt\n"
           << std::endl;
 }
 
