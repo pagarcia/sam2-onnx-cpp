@@ -232,42 +232,43 @@ def process_video(args):
         # ── Image encoder ─────────────────────────────────────────
         t_enc = time.time()
         if fidx == 0:
-            embed, f0, f1 = embed0, f0_0, f1_0
+            enc_embed, f0, f1 = embed0, f0_0, f1_0
             enc_ms = (time.time() - t_enc)*1000
             vis_pos = None  # not used on frame 0
         else:
             tensor, _ = prepare_image(frame, (enc_h, enc_w))
             enc_out = sess_enc.run(None, {sess_enc.get_inputs()[0].name: tensor})
-            embed, f0, f1, _, vis_pos = enc_out
+            enc_embed, f0, f1, _, vis_pos = enc_out
             enc_ms = (time.time() - t_enc)*1000
 
         # ── Memory attention (from 2nd frame) ─────────────────────
         if fidx > 0 and mem_feats is not None:
             t_mat = time.time()
             attn_inputs = {
-                "current_vision_feat":      embed,
+                "current_vision_feat":      enc_embed,
                 "current_vision_pos_embed": vis_pos,
-                "memory_0":                np.zeros((0,256), np.float32),
-                "memory_1":                mem_feats,
-                "memory_pos_embed":        mem_pos}
-            embed = sess_mat.run(None, attn_inputs)[0]
+                "memory_0":                 np.zeros((0,256), np.float32),
+                "memory_1":                 mem_feats,
+                "memory_pos_embed":         mem_pos}
+            fused_embed = sess_mat.run(None, attn_inputs)[0]
             mat_ms = (time.time() - t_mat)*1000
         else:
             mat_ms = 0.0
+            fused_embed = enc_embed
 
         # ── Decoder ───────────────────────────────────────────────
         t_dec = time.time()
         if fidx == 0:
-            _, mask_for_mem, pred = decode(sess_dec, pts0, lbls0, embed, f0, f1)
+            _, mask_for_mem, pred = decode(sess_dec, pts0, lbls0, enc_embed, f0, f1)
         else:
-            _, mask_for_mem, pred = decode(sess_dec, None, None, embed, f0, f1)
+            _, mask_for_mem, pred = decode(sess_dec, None, None, fused_embed, f0, f1)
         dec_ms = (time.time() - t_dec)*1000
 
         # ── Memory encoder ────────────────────────────────────────
         t_men = time.time()
         men_out = sess_men.run(None, {
             "mask_for_mem": mask_for_mem[:, 0:1],  # only first mask
-            "pix_feat":     embed})
+            "pix_feat":     enc_embed})
         mem_feats, mem_pos, _ = men_out
         men_ms = (time.time() - t_men)*1000
 
