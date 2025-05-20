@@ -67,10 +67,10 @@ python -m onnxsim checkpoints/tiny/memory_attention_tiny.onnx checkpoints/tiny/m
 
 Test the exported ONNX models by running:
 ```bash
-python export/onnx_test_image_seed_points.py --model_size tiny
-python export/onnx_test_image_bounding_box.py --model_size tiny
-python export/onnx_test_video_seed_points.py --model_size tiny
-python export/onnx_test_video_bounding_box.py --model_size tiny
+python export/onnx_test_image.py --prompt seed_points --model_size tiny
+python export/onnx_test_image.py --prompt bounding_box --model_size tiny
+python export/onnx_test_video.py --prompt seed_points --model_size tiny
+python export/onnx_test_video.py --prompt bounding_box --model_size tiny
 ```
 *Note:*  
 - The image test requires a `.jpg`/`.png` image.  
@@ -276,10 +276,8 @@ cd $HOME/Documents/sam2-onnx-cpp/cpp
 sam2-onnx-cpp/
 ├── export/
 │   ├── onnx_export.py      # Main ONNX export script
-│   ├── onnx_test_image_seed_points.py  # Python test script for an image with seed points
-│   ├── onnx_test_image_bounding_box.py  # Python test script for an image with bounding box
-│   ├── onnx_test_video_seed_points.py  # Python test script for a video with seed points
-│   ├── onnx_test_video_bounding_box.py  # Python test script for a video with bounding box
+│   ├── onnx_test_image.py  # Python test script for an image with seed points or bounding box
+│   ├── onnx_test_video.py  # Python test script for a video with seed points or bounding box
 │   └── src/                # Contains modules and utilities for ONNX export
 ├── cpp/
 │   ├── CMakeLists.txt 

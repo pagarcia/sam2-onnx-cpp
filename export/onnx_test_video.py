@@ -110,8 +110,8 @@ def interactive_select_points(first_bgr, sess_enc, sess_dec, enc_shape):
     def run():
         if not points: show(); return
         pts, lbls = prepare_points(points, labels, (h_org, w_org), enc_shape)
-        _, _, pred = decode(sess_dec, pts, lbls, embed, f0, f1)
-        show((pred[0, 0] > 0).astype(np.uint8))
+        _, mask_hi, _ = decode(sess_dec, pts, lbls, embed, f0, f1)
+        show((mask_hi[0, 0] > 0).astype(np.uint8))
 
     def cb(event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -156,8 +156,8 @@ def interactive_select_box(first_bgr, sess_enc, sess_dec, enc_shape):
         x1, x2 = sorted((int(x1d / scale), int(x2d / scale)))
         y1, y2 = sorted((int(y1d / scale), int(y2d / scale)))
         pts, lbls = prepare_box_prompt((x1, y1, x2, y2), (h_org, w_org), enc_shape)
-        _, _, pred = decode(sess_dec, pts, lbls, embed, f0, f1)
-        show((pred[0, 0] > 0).astype(np.uint8))
+        _, mask_hi, _ = decode(sess_dec, pts, lbls, embed, f0, f1)
+        show((mask_hi[0, 0] > 0).astype(np.uint8))
 
     def cb(event, x, y, flags, param):
         nonlocal rect_s, rect_e, drawing
@@ -273,8 +273,9 @@ def process_video(args):
         men_ms = (time.time() - t_men)*1000
 
         # ── Overlay & write ───────────────────────────────────────
-        mask = cv2.resize((pred[0, 0] > 0).astype(np.uint8),
-                          (w_org, h_org), cv2.INTER_LINEAR)
+        logits  = mask_for_mem[0, 0]                          # 256×256 float
+        mask_hi = cv2.resize(logits, (w_org, h_org), cv2.INTER_LINEAR)
+        mask    = (mask_hi > 0).astype(np.uint8)              # 0/1 full-res
         writer.write(green_overlay(frame, mask, 0.5))
 
         # ── log timings ───────────────────────────────────────────
