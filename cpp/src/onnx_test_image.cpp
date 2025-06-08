@@ -229,7 +229,9 @@ int runOnnxTestImage(int argc,char** argv)
 
     /* ---------------  init SAM-2 (GPU if available)  --------------- */
     bool cudaAvail=false;
-    for(auto&p:Ort::GetAvailableProviders()) if(p=="CUDAExecutionProvider") cudaAvail=true;
+    // OLD (kept here for reference – relied on GetAvailableProviders, which crashes in PCs with no GPU)
+    // for(auto&p:Ort::GetAvailableProviders()) if(p=="CUDAExecutionProvider") cudaAvail=true;
+    cudaAvail = SAM2::hasCudaDriver();
     string device = cudaAvail ? "cuda:0" : "cpu";
     cout<<"[INFO] Initialising on "<<device<<"\n";
 

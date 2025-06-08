@@ -80,8 +80,8 @@ You can find short video samples at [filesamples.com](https://filesamples.com/fo
 ### 7. Compile & Run the C++ Wrapper
 
 #### 7.1 Download onnxruntime  
-Download and unzip the file from [onnxruntime-win-x64-gpu-1.20.0.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-win-x64-gpu-1.20.0.zip) (see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.20.0)).  
-Extract to a location like `C:\Program Files\onnxruntime-win-x64-gpu-1.20.0`.
+Download and unzip the file from [onnxruntime-win-x64-gpu-1.22.0.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-gpu-1.22.0.zip) (see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0)).  
+Extract to a location like `C:\Program Files\onnxruntime-win-x64-gpu-1.22.0`.
 
 #### 7.2 OpenCV  
 Install OpenCV (or point to an existing installation), e.g. located at `C:\Program Files\OpenCV\Release`.
@@ -94,7 +94,7 @@ It should match your version of CUDA.
 
 Inside the `cpp` folder, create a `build_release` folder and run:
 ```bash
-cmake -G "Visual Studio 17 2022" -DCMAKE_CONFIGURATION_TYPES=Release -DOpenCV_DIR="C:/Program Files/OpenCV/Release" -DONNXRUNTIME_DIR="C:/Program Files/onnxruntime-win-x64-gpu-1.20.0" ..
+cmake -G "Visual Studio 17 2022" -DCMAKE_CONFIGURATION_TYPES=Release -DOpenCV_DIR="C:/Program Files/OpenCV/Release" -DONNXRUNTIME_DIR="C:/Program Files/onnxruntime-win-x64-gpu-1.22.0" ..
 cmake --build . --config Release
 ```
 
@@ -116,7 +116,7 @@ From `C:\Program Files\NVIDIA\CUDNN\v9.8\bin\12.8`:
 - `cudnn_ops64_9.dll`
 - `cudnn64_9.dll`
 
-From `C:/Program Files/onnxruntime-win-x64-gpu-1.20.0`:
+From `C:/Program Files/onnxruntime-win-x64-gpu-1.22.0`:
 - `onnxruntime.dll`
 - `onnxruntime_providers_cuda.dll`
 - `onnxruntime_providers_shared.dll`

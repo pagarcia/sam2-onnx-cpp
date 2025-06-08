@@ -362,3 +362,52 @@ std::vector<SAM2Node> SAM2::getSessionNodes(Ort::Session* session, bool isInput)
     }
     return nodes;
 }
+
+bool SAM2::hasCudaDriver()
+{
+    static int cached = -1;                 // −1 ⇒ not checked yet
+    if (cached != -1) return cached;
+
+#ifdef _WIN32
+    HMODULE h = LoadLibraryA("nvcuda.dll");
+    if (!h) { cached = 0;  return false; }
+
+    using CUINIT     = int (__stdcall*)(unsigned);
+    using CUGETCOUNT = int (__stdcall*)(int*);
+
+    auto cuInit           = reinterpret_cast<CUINIT>
+        (GetProcAddress(h, "cuInit"));
+    auto cuDeviceGetCount = reinterpret_cast<CUGETCOUNT>
+        (GetProcAddress(h, "cuDeviceGetCount"));
+
+    int ok = 0;
+    if (cuInit && cuDeviceGetCount && cuInit(0) == 0) {
+        int n = 0;
+        if (cuDeviceGetCount(&n) == 0 && n > 0)
+            ok = 1;
+    }
+    FreeLibrary(h);
+    cached = ok;
+    return ok;
+#else
+    void* h = dlopen("libcuda.so.1", RTLD_LAZY | RTLD_LOCAL);
+    if (!h) h = dlopen("libcuda.so", RTLD_LAZY | RTLD_LOCAL);
+    if (!h) { cached = 0;  return false; }
+
+    using CUINIT     = int (*)(unsigned);
+    using CUGETCOUNT = int (*)(int*);
+
+    auto cuInit           = reinterpret_cast<CUINIT>(dlsym(h, "cuInit"));
+    auto cuDeviceGetCount = reinterpret_cast<CUGETCOUNT>(dlsym(h, "cuDeviceGetCount"));
+
+    int ok = 0;
+    if (cuInit && cuDeviceGetCount && cuInit(0) == 0) {
+        int n = 0;
+        if (cuDeviceGetCount(&n) == 0 && n > 0)
+            ok = 1;
+    }
+    dlclose(h);
+    cached = ok;
+    return ok;
+#endif
+}

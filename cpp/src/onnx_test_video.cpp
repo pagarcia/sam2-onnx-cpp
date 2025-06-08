@@ -230,7 +230,10 @@ int runOnnxTestVideo(int argc,char** argv)
              <<"       threads    = "<<threads<<"\n\n";
 
     /* ───── 4) init SAM2 (GPU if possible) ───── */
-    bool cuda=false; for(auto&p:Ort::GetAvailableProviders()) if(p=="CUDAExecutionProvider") cuda=true;
+    bool cuda=false; 
+    // OLD (kept here for reference – relied on GetAvailableProviders, which crashes in PCs with no GPU)
+    // for(auto&p:Ort::GetAvailableProviders()) if(p=="CUDAExecutionProvider") cuda=true;
+    cuda = SAM2::hasCudaDriver();
     std::string device = cuda? "cuda:0":"cpu";
     SAM2 sam;
     if(!sam.initializeVideo(encPath,decPath,memAttnPath,memEncPath,threads,device))

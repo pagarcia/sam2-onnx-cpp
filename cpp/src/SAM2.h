@@ -151,6 +151,9 @@ public:
                                          float threshold = 0.f);
     static Image<float> extractAndCreateMask(Ort::Value &maskTensor, const SAM2Size &targetSize);
 
+    /// Helper to know if ther is NVIDIA driver + at least one CUDA device present
+    static bool hasCudaDriver();
+
     // ORT session config
     static void setupSessionOptions(Ort::SessionOptions &options,
                                     int threadsNumber,
