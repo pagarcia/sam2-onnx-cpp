@@ -111,10 +111,12 @@ void SAM2::setupSessionOptions(Ort::SessionOptions &options,
     }
     else if (device.rfind("cuda:", 0) == 0) {
         std::cout << "[DEBUG] Using CUDA execution provider." << std::endl;
+
         int gpuId = std::stoi(device.substr(5));
-        OrtCUDAProviderOptions cudaOpts;
+        OrtCUDAProviderOptions cudaOpts{};   // zero-initialise every field
         cudaOpts.device_id = gpuId;
-        options.AppendExecutionProvider_CUDA(cudaOpts);
+
+        options.AppendExecutionProvider_CUDA(cudaOpts);   // throws on failure
     }
     else if (device.rfind("coreml", 0) == 0) {
 #ifdef __APPLE__
@@ -363,51 +365,37 @@ std::vector<SAM2Node> SAM2::getSessionNodes(Ort::Session* session, bool isInput)
     return nodes;
 }
 
+// ─── SAM2::hasCudaDriver – lean release version ──────────────────────
 bool SAM2::hasCudaDriver()
 {
-    static int cached = -1;                 // −1 ⇒ not checked yet
+    static int cached = -1;                // -1 ⇒ not checked yet
     if (cached != -1) return cached;
 
-#ifdef _WIN32
-    HMODULE h = LoadLibraryA("nvcuda.dll");
-    if (!h) { cached = 0;  return false; }
+#if defined(_WIN32)
+    /* 1. Load the runtime DLL shipped with the app (once, never unload) */
+    static HMODULE hCUDART =
+        LoadLibraryExW(L"cudart64_12.dll", nullptr,
+                       LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    if (!hCUDART) { cached = 0; return false; }
 
-    using CUINIT     = int (__stdcall*)(unsigned);
-    using CUGETCOUNT = int (__stdcall*)(int*);
+    /* 2. Resolve cudaGetDeviceCount (cdecl) */
+    using GetCnt = int (__cdecl*)(int*);
+    auto fn = reinterpret_cast<GetCnt>(
+        GetProcAddress(hCUDART, "cudaGetDeviceCount"));
+    if (!fn) { cached = 0; return false; }
 
-    auto cuInit           = reinterpret_cast<CUINIT>
-        (GetProcAddress(h, "cuInit"));
-    auto cuDeviceGetCount = reinterpret_cast<CUGETCOUNT>
-        (GetProcAddress(h, "cuDeviceGetCount"));
+#else   // ─── Linux / WSL ─────────────────────────────────────────────
+    static void* hCUDART = dlopen("libcudart.so.12", RTLD_LAZY | RTLD_LOCAL);
+    if (!hCUDART) { cached = 0; return false; }
 
-    int ok = 0;
-    if (cuInit && cuDeviceGetCount && cuInit(0) == 0) {
-        int n = 0;
-        if (cuDeviceGetCount(&n) == 0 && n > 0)
-            ok = 1;
-    }
-    FreeLibrary(h);
-    cached = ok;
-    return ok;
-#else
-    void* h = dlopen("libcuda.so.1", RTLD_LAZY | RTLD_LOCAL);
-    if (!h) h = dlopen("libcuda.so", RTLD_LAZY | RTLD_LOCAL);
-    if (!h) { cached = 0;  return false; }
-
-    using CUINIT     = int (*)(unsigned);
-    using CUGETCOUNT = int (*)(int*);
-
-    auto cuInit           = reinterpret_cast<CUINIT>(dlsym(h, "cuInit"));
-    auto cuDeviceGetCount = reinterpret_cast<CUGETCOUNT>(dlsym(h, "cuDeviceGetCount"));
-
-    int ok = 0;
-    if (cuInit && cuDeviceGetCount && cuInit(0) == 0) {
-        int n = 0;
-        if (cuDeviceGetCount(&n) == 0 && n > 0)
-            ok = 1;
-    }
-    dlclose(h);
-    cached = ok;
-    return ok;
+    using GetCnt = int (*)(int*);
+    auto fn = reinterpret_cast<GetCnt>(dlsym(hCUDART, "cudaGetDeviceCount"));
+    if (!fn) { cached = 0; return false; }
 #endif
+
+    /* 3. Query device count */
+    int n = 0;
+    int err = fn(&n);          // 0 == cudaSuccess
+    cached = (err == 0 && n > 0) ? 1 : 0;
+    return cached;
 }

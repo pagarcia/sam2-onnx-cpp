@@ -106,6 +106,12 @@ Your previously built ONNX files renamed as:
 - `memory_attention.onnx`
 - `memory_encoder.onnx`
 
+From `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.5\bin`:
+- `cublas64_12.dll`
+- `cublasLt64_12.dll`
+- `cudart64_12.dll`
+- `cufft64_11.dll`
+
 From `C:\Program Files\NVIDIA\CUDNN\v9.8\bin\12.8`:
 - `cudnn_adv64_9.dll`
 - `cudnn_cnn64_9.dll`
