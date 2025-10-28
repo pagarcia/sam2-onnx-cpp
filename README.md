@@ -31,7 +31,7 @@ sam2_env\Scripts\activate
 
 With the virtual environment activated, install the required packages:
 ```bash
-pip install torch onnx onnxruntime hydra-core pillow tqdm iopath opencv-python pyqt5
+pip install torch onnx onnxruntime onnxscript hydra-core pillow tqdm iopath opencv-python pyqt5
 ```
 *Note: The `opencv-python` and `pyqt5` installs are needed for the Python test scripts.*
 
