@@ -18,7 +18,33 @@ from src.utils import (
     export_memory_attention, export_memory_encoder
 )
 
+def _patch_repeat_interleave_for_export():
+    """
+    Work around ONNX exporter missing lowering for
+    torch.repeat_interleave(x, int, dim=None) on 1D inputs.
+    We replace it with view+repeat+reshape (Tile/Reshape in ONNX).
+    """
+    import torch as _torch
+
+    # Function variant
+    _orig_fn = _torch.repeat_interleave
+    def _ri_fn(x, repeats, dim=None, *a, **k):
+        if dim is None and x.dim() == 1 and isinstance(repeats, int):
+            # Equivalent to repeat_interleave along dim=0
+            return x.reshape(-1, 1).repeat(1, repeats).reshape(-1)
+        return _orig_fn(x, repeats, dim=dim, *a, **k)
+    _torch.repeat_interleave = _ri_fn
+
+    # Tensor method variant
+    _orig_m = _torch.Tensor.repeat_interleave
+    def _ri_m(self, repeats, dim=None, *a, **k):
+        if dim is None and self.dim() == 1 and isinstance(repeats, int):
+            return self.reshape(-1, 1).repeat(1, repeats).reshape(-1)
+        return _orig_m(self, repeats, dim=dim, *a, **k)
+    _torch.Tensor.repeat_interleave = _ri_m
+
 def main(args):
+    _patch_repeat_interleave_for_export()
     # Mapping of model_size to configuration and checkpoint naming.
     model_mapping = {
         "base_plus": {"config_suffix": "b+", "ckpt_suffix": "base_plus"},
