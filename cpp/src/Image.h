@@ -1,3 +1,4 @@
+// sam2-onnx-cpp/cpp/src/Image.h
 #ifndef IMAGE_H
 #define IMAGE_H
 

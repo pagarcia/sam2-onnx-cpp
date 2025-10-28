@@ -1,3 +1,4 @@
+# sam2-onnx-cpp/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.14)
 project(SAM2_ONNX)
 

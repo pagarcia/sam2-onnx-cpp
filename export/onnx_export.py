@@ -1,3 +1,4 @@
+# sam2-onnx-cpp/export/onnx_export.py
 import sys
 import os
 # Add the repository root (one level up from export) so Python can find the sam2 package.

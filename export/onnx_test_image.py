@@ -1,3 +1,4 @@
+# sam2-onnx-cpp/export/onnx_test_image.py
 #!/usr/bin/env python3
 # ──────────────────────────────────────────────────────────────────────────────
 #  onnx_test_image.py

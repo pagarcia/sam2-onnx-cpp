@@ -1,3 +1,4 @@
+# sam2-onnx-cpp/fetch_sparse.sh
 #!/usr/bin/env bash
 set -e  # exit immediately on error
 

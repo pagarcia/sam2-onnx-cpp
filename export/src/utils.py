@@ -1,4 +1,4 @@
-# src/utils.py
+# sam2-onnx-cpp/export/src/utils.py
 import os
 import torch
 import onnx

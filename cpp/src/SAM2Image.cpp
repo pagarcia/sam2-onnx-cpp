@@ -1,3 +1,4 @@
+// sam2-onnx-cpp/cpp/src/SAM2Image.cpp
 #include "SAM2.h"
 #include <fstream>
 #include <stdexcept>

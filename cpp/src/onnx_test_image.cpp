@@ -1,4 +1,4 @@
-// ──────────────────────────────  onnx_test_image.cpp  ───────────────────────────
+// sam2-onnx-cpp/cpp/src/onnx_test_image.cpp
 #include "openFileDialog.h"
 #include "SAM2.h"
 #include "CVHelpers.h"

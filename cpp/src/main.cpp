@@ -1,4 +1,4 @@
-// ───────────────────────────────  main.cpp  ──────────────────────────────
+// sam2-onnx-cpp/cpp/src/main.cpp
 #include <iostream>
 #include <string>
 

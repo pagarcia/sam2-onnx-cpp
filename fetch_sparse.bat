@@ -1,5 +1,6 @@
 @echo off
 REM ================================
+REM sam2-onnx-cpp/fetch_sparse.bat
 REM Sparse Checkout, Copy, and Checkpoint Download Script
 REM This script:
 REM 1. Deletes existing "sam2" and "checkpoints" folders (if present)
