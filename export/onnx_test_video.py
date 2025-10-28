@@ -1,33 +1,46 @@
 # sam2-onnx-cpp/export/onnx_test_video.py
 #!/usr/bin/env python3
-import os, sys, time, argparse
+# CPU-optimized: encoder fast (BASIC/EXTENDED), decoder/memory safe.
+import os
+# Limit BLAS thread pools before NumPy loads.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
+import sys, time, argparse
 import cv2
 import numpy as np
 import onnxruntime as ort
 from onnxruntime import InferenceSession
 from PyQt5 import QtWidgets
 
-# ─────────────────────────── utilities ────────────────────────────
+cv2.setNumThreads(1)
+
 def print_system_info() -> None:
     print("[INFO] OS :", sys.platform)
     print("[INFO] ONNX Runtime providers (available) :", ort.get_available_providers())
 
-def _make_session(path: str, kind: str = "safe") -> InferenceSession:
-    """
-    kind:
-      - "encoder": allow basic graph opts (faster, tends to be safe)
-      - "safe":    disable all opts (decoder, memory_*), avoids FusedGemm issues
-    """
+def _make_encoder_session(path: str) -> InferenceSession:
     so = ort.SessionOptions()
-    if kind == "encoder":
-        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
-    else:
-        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
-        so.add_session_config_entry("session.disable_gemm_fast_gelu_fusion", "1")
-        so.add_session_config_entry("session.disable_prepacking", "1")
-
+    # BASIC is already a win; EXTENDED may help more. Try EXTENDED first.
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+    so.intra_op_num_threads = max(1, (os.cpu_count() or 8) - 1)
+    so.inter_op_num_threads = 1
+    so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     providers = ["CPUExecutionProvider"]
-    print(f"[INFO] Loading {os.path.basename(path)} [{kind}] with providers={providers}")
+    print(f"[INFO] Loading {os.path.basename(path)} [encoder] with providers={providers}")
+    sess = InferenceSession(path, sess_options=so, providers=providers)
+    print("[INFO] Inputs:", [(i.name, i.shape, i.type) for i in sess.get_inputs()])
+    print("[INFO] Outputs:", [o.name for o in sess.get_outputs()])
+    return sess
+
+def _make_safe_session(path: str) -> InferenceSession:
+    so = ort.SessionOptions()
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+    so.add_session_config_entry("session.disable_gemm_fast_gelu_fusion", "1")
+    providers = ["CPUExecutionProvider"]
+    print(f"[INFO] Loading {os.path.basename(path)} [safe] with providers=={providers}")
     sess = InferenceSession(path, sess_options=so, providers=providers)
     print("[INFO] Inputs:", [(i.name, i.shape, i.type) for i in sess.get_inputs()])
     print("[INFO] Outputs:", [o.name for o in sess.get_outputs()])
@@ -63,11 +76,10 @@ def prepare_box_prompt(rect, img_sz, enc_sz):
     pts = np.array([[x1, y1], [x2, y2]], np.float32)
     pts[:, 0] = (pts[:, 0] / w_org) * w_enc
     pts[:, 1] = (pts[:, 1] / h_org) * h_enc
-    lbls = np.array([2.0, 3.0], np.float32)          # SAM-2 bbox labels
+    lbls = np.array([2.0, 3.0], np.float32)
     return pts[np.newaxis, ...], lbls[np.newaxis, ...]
 
 def decode(sess_dec, coords, labels, embed, f0, f1):
-    """Bind by NAME; ensure float32 + contiguous."""
     if coords is None:
         coords = np.zeros((1, 0, 2), np.float32)
         labels = np.zeros((1, 0),   np.float32)
@@ -88,7 +100,6 @@ def green_overlay(bgr, mask255, alpha=0.5):
 # ─────────────── interactive prompt – seed points ────────────────
 def interactive_select_points(first_bgr, sess_enc, sess_dec, enc_shape):
     tensor, (h_org, w_org) = prepare_image(first_bgr, enc_shape)
-    # Run encoder and read outputs by NAME
     enc_input_name = sess_enc.get_inputs()[0].name
     enc_out_names = [o.name for o in sess_enc.get_outputs()]
     enc_vals = sess_enc.run(None, {enc_input_name: tensor})
@@ -197,13 +208,27 @@ def interactive_select_box(first_bgr, sess_enc, sess_dec, enc_shape):
 # ─────────────────────── main processing loop ───────────────────────
 def process_video(args):
     ckpt_dir = os.path.join("checkpoints", args.model_size)
-    paths = lambda name: os.path.join(ckpt_dir, f"{name}.onnx")
+    # Prefer quantized encoder if present
+    enc_candidates = [
+        os.path.join(ckpt_dir, "image_encoder.int8.onnx"),
+        os.path.join(ckpt_dir, "image_encoder.onnx"),
+    ]
+    enc_path = next((p for p in enc_candidates if os.path.exists(p)), None)
+    if enc_path is None:
+        sys.exit(f"ERROR: Encoder ONNX not found in {ckpt_dir}")
 
-    # Encoder: allow basic opts; others: safest settings
-    sess_enc = _make_session(paths("image_encoder"), kind="encoder")
-    sess_dec = _make_session(paths("image_decoder"), kind="safe")
-    sess_men = _make_session(paths("memory_encoder"),  kind="safe")
-    sess_mat = _make_session(paths("memory_attention"),kind="safe")
+    paths = lambda name: os.path.join(ckpt_dir, f"{name}.onnx")
+    dec_path = paths("image_decoder")
+    men_path = paths("memory_encoder")
+    mat_path = paths("memory_attention")
+    for p in [dec_path, men_path, mat_path]:
+        if not os.path.exists(p):
+            sys.exit(f"ERROR: ONNX file missing: {p}")
+
+    sess_enc = _make_encoder_session(enc_path)
+    sess_dec = _make_safe_session(dec_path)
+    sess_men = _make_safe_session(men_path)
+    sess_mat = _make_safe_session(mat_path)
 
     enc_h, enc_w = sess_enc.get_inputs()[0].shape[2:]
     print(f"[INFO] Encoder input = {(enc_h, enc_w)}")
@@ -220,7 +245,6 @@ def process_video(args):
                              (w_org, h_org))
     if not writer.isOpened(): sys.exit("ERROR: cannot open VideoWriter")
 
-    # ── prompt on first frame ─────────────────────────────────────
     ret, first_bgr = cap.read()
     if not ret: sys.exit("ERROR: empty video")
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -230,45 +254,43 @@ def process_video(args):
             interactive_select_box(first_bgr, sess_enc, sess_dec, (enc_h, enc_w))
         pts0, lbls0 = prepare_box_prompt(box, (h_org, w_org), (enc_h, enc_w)) \
                       if box else (None, None)
-    else:  # seed_points
+    else:
         pts, lbls, embed0, f0_0, f1_0, (h_org, w_org) = \
             interactive_select_points(first_bgr, sess_enc, sess_dec, (enc_h, enc_w))
         pts0, lbls0 = prepare_points(pts, lbls, (h_org, w_org), (enc_h, enc_w))
 
-    # ensure contiguity/dtype
     embed0 = np.ascontiguousarray(embed0.astype(np.float32))
     f0_0   = np.ascontiguousarray(f0_0.astype(np.float32))
     f1_0   = np.ascontiguousarray(f1_0.astype(np.float32))
 
-    mem_feats = mem_pos = None
     fidx = 0
+    mem_feats = mem_pos = None
+
+    # Pull stable I/O names once
+    enc_input_name = sess_enc.get_inputs()[0].name
+    enc_out_names = [o.name for o in sess_enc.get_outputs()]
+
     while True:
         ret, frame = cap.read()
         if not ret or (args.max_frames > 0 and fidx >= args.max_frames): break
 
-        # ── Image encoder ─────────────────────────────────────────
+        # Encoder
         t_enc = time.time()
         if fidx == 0:
             enc_embed, f0, f1 = embed0, f0_0, f1_0
-            vis_pos = None
             enc_ms = (time.time() - t_enc)*1000
+            vis_pos = None
         else:
             tensor, _ = prepare_image(frame, (enc_h, enc_w))
-            enc_input_name = sess_enc.get_inputs()[0].name
-            enc_out_names = [o.name for o in sess_enc.get_outputs()]
             enc_vals = sess_enc.run(None, {enc_input_name: tensor})
             enc = dict(zip(enc_out_names, enc_vals))
-            enc_embed = enc["image_embeddings"]
-            f0        = enc["high_res_features1"]
-            f1        = enc["high_res_features2"]
-            vis_pos   = enc["vision_pos_embed"]
-            enc_embed = np.ascontiguousarray(enc_embed.astype(np.float32))
-            f0        = np.ascontiguousarray(f0.astype(np.float32))
-            f1        = np.ascontiguousarray(f1.astype(np.float32))
-            vis_pos   = np.ascontiguousarray(vis_pos.astype(np.float32))
+            enc_embed = np.ascontiguousarray(enc["image_embeddings"].astype(np.float32))
+            f0        = np.ascontiguousarray(enc["high_res_features1"].astype(np.float32))
+            f1        = np.ascontiguousarray(enc["high_res_features2"].astype(np.float32))
+            vis_pos   = np.ascontiguousarray(enc["vision_pos_embed"].astype(np.float32))
             enc_ms = (time.time() - t_enc)*1000
 
-        # ── Memory attention (from 2nd frame) ─────────────────────
+        # Memory attention (from 2nd frame)
         if fidx > 0 and mem_feats is not None:
             t_mat = time.time()
             attn_inputs = {
@@ -285,15 +307,15 @@ def process_video(args):
             mat_ms = 0.0
             fused_embed = enc_embed
 
-        # ── Decoder ───────────────────────────────────────────────
+        # Decoder
         t_dec = time.time()
         if fidx == 0:
-            _, mask_for_mem, pred = decode(sess_dec, pts0, lbls0, enc_embed, f0, f1)
+            _, mask_for_mem, _ = decode(sess_dec, pts0, lbls0, enc_embed, f0, f1)
         else:
-            _, mask_for_mem, pred = decode(sess_dec, None, None, fused_embed, f0, f1)
+            _, mask_for_mem, _ = decode(sess_dec, None, None, fused_embed, f0, f1)
         dec_ms = (time.time() - t_dec)*1000
 
-        # ── Memory encoder ────────────────────────────────────────
+        # Memory encoder
         t_men = time.time()
         men_out = sess_men.run(None, {
             "mask_for_mem": np.ascontiguousarray(mask_for_mem[:, 0:1].astype(np.float32)),
@@ -304,34 +326,29 @@ def process_video(args):
         mem_pos   = np.ascontiguousarray(mem_pos.astype(np.float32))
         men_ms = (time.time() - t_men)*1000
 
-        # ── Overlay & write ───────────────────────────────────────
-        logits  = mask_for_mem[0, 0]                          # 1024×1024 float
+        # Overlay & write
+        logits  = mask_for_mem[0, 0]
         mask_hi = cv2.resize(logits, (w_org, h_org), cv2.INTER_LINEAR)
-        mask    = (mask_hi > 0).astype(np.uint8)              # 0/1 full-res
+        mask    = (mask_hi > 0).astype(np.uint8)
         writer.write(green_overlay(frame, mask, 0.5))
 
-        # ── log timings ───────────────────────────────────────────
         if fidx == 0:
             print(f"Frame {fidx:03d} - Enc:{enc_ms:.1f} | Dec:{dec_ms:.1f} | MemEnc:{men_ms:.1f}")
         else:
-            print(f"Frame {fidx:03d} - Enc:{enc_ms:.1f} | Attn:{mat_ms:.1f} | "
-                  f"Dec:{dec_ms:.1f} | MemEnc:{men_ms:.1f}")
+            print(f"Frame {fidx:03d} - Enc:{enc_ms:.1f} | Attn:{mat_ms:.1f} | Dec:{dec_ms:.1f} | MemEnc:{men_ms:.1f}")
         fidx += 1
 
     cap.release(); writer.release()
     print(f"Done! Wrote {fidx} frames with overlays to {out_path}")
 
-# ────────────────────────── CLI wrapper ───────────────────────────
 def main():
     print_system_info()
     ap = argparse.ArgumentParser(
-        description="Unified video segmentation demo for SAM-2 ONNX "
-                    "using either seed points or a bounding box prompt.")
+        description="Video segmentation demo for SAM-2 ONNX (CPU-optimized)")
     ap.add_argument("--model_size", default="tiny",
                     choices=["base_plus", "large", "small", "tiny"])
     ap.add_argument("--prompt", default="seed_points",
-                    choices=["seed_points", "bounding_box"],
-                    help="Interaction mode for the first frame.")
+                    choices=["seed_points", "bounding_box"])
     ap.add_argument("--max_frames", type=int, default=0,
                     help="Max frames to process (0 = all).")
     args = ap.parse_args()

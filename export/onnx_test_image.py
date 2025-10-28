@@ -1,20 +1,61 @@
 # sam2-onnx-cpp/export/onnx_test_image.py
 #!/usr/bin/env python3
-import os, sys, time, argparse
-import cv2, numpy as np
+# CPU-optimized: encoder fast (EXTENDED + prepacking), decoder safe (no risky fusion).
+import os
+# Limit BLAS thread pools before NumPy loads (helps avoid oversubscription).
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
+import sys, time, argparse
+import cv2
+import numpy as np
 import onnxruntime as ort
 from onnxruntime import InferenceSession
 from PyQt5 import QtWidgets
+
+# Keep OpenCV from spawning extra threads
+cv2.setNumThreads(1)
 
 def print_system_info():
     print("[INFO] OS :", sys.platform)
     print("[INFO] ONNX Runtime providers (available) :", ort.get_available_providers())
 
+def _make_encoder_session(path: str) -> InferenceSession:
+    """Fast encoder: ORT_ENABLE_EXTENDED + prepacking + sensible threads."""
+    so = ort.SessionOptions()
+    # Let ORT do aggressive CPU graph optimizations for the encoder.
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+    # Light threading: use cores-1; avoid inter-op oversubscription.
+    so.intra_op_num_threads = max(1, (os.cpu_count() or 8) - 1)
+    so.inter_op_num_threads = 1
+    so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    providers = ["CPUExecutionProvider"]
+    print(f"[INFO] Loading {os.path.basename(path)} [encoder] with providers={providers}")
+    sess = InferenceSession(path, sess_options=so, providers=providers)
+    print("[INFO] Inputs:", [(i.name, i.shape, i.type) for i in sess.get_inputs()])
+    print("[INFO] Outputs:", [o.name for o in sess.get_outputs()])
+    return sess
+
+def _make_decoder_session(path: str) -> InferenceSession:
+    """Safe decoder/memory: disable risky fusion; keep prepacking ON for speed."""
+    so = ort.SessionOptions()
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+    # This fusion has caused bad Gemm shapes in our graph; keep it off.
+    so.add_session_config_entry("session.disable_gemm_fast_gelu_fusion", "1")
+    providers = ["CPUExecutionProvider"]
+    print(f"[INFO] Loading {os.path.basename(path)} [safe] with providers={providers}")
+    sess = InferenceSession(path, sess_options=so, providers=providers)
+    print("[INFO] Inputs:", [(i.name, i.shape, i.type) for i in sess.get_inputs()])
+    print("[INFO] Outputs:", [o.name for o in sess.get_outputs()])
+    return sess
+
 def prepare_points(points, labels, img_size, enc_size):
     if not points:
         return None, None
-    pts = np.asarray(points, dtype=np.float32)   # [N,2]
-    lbl = np.asarray(labels, dtype=np.float32)   # [N]
+    pts = np.asarray(points, dtype=np.float32)
+    lbl = np.asarray(labels, dtype=np.float32)
     H_org, W_org = img_size
     H_enc, W_enc = enc_size
     pts[:, 0] = (pts[:, 0] / W_org) * W_enc
@@ -30,30 +71,16 @@ def prepare_rectangle(rect, img_size, enc_size):
     pts = np.array([[x1, y1], [x2, y2]], np.float32)
     pts[:, 0] = (pts[:, 0] / W_org) * W_enc
     pts[:, 1] = (pts[:, 1] / H_org) * H_enc
-    lbl = np.array([2.0, 3.0], np.float32)      # SAM-2 bbox labels
+    lbl = np.array([2.0, 3.0], np.float32)
     return pts[np.newaxis, ...], lbl[np.newaxis, ...]
 
 def green_overlay(bgr, mask255, alpha=.5):
     color = np.zeros_like(bgr); color[mask255==255] = (0,255,0)
     return cv2.addWeighted(bgr, 1.0, color, alpha, 0)
 
-def _make_session(path: str) -> InferenceSession:
-    # Force CPU EP and turn off fusions that sometimes break shapes (FusedGemm).
-    so = ort.SessionOptions()
-    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
-    # Optional: also disable some specific fusions (harmless if unknown)
-    so.add_session_config_entry("session.disable_gemm_fast_gelu_fusion", "1")
-    so.add_session_config_entry("session.disable_prepacking", "1")
-    providers = ["CPUExecutionProvider"]  # <= key change
-    print(f"[INFO] Loading {os.path.basename(path)} with providers={providers}")
-    sess = InferenceSession(path, sess_options=so, providers=providers)
-    print("[INFO] Inputs:", [(i.name, i.shape, i.type) for i in sess.get_inputs()])
-    print("[INFO] Outputs:", [o.name for o in sess.get_outputs()])
-    return sess
-
 def main():
     print_system_info()
-    ap = argparse.ArgumentParser(description="Unified SAM-2 ONNX demo (seed-points / bounding-box)")
+    ap = argparse.ArgumentParser(description="SAM-2 ONNX (seed-points / bounding-box) – CPU optimized")
     ap.add_argument("--model_size", default="tiny", choices=["base_plus","large","small","tiny"])
     ap.add_argument("--prompt", default="seed_points", choices=["seed_points","bounding_box"])
     args = ap.parse_args()
@@ -66,14 +93,22 @@ def main():
     if not img_path: sys.exit("No image selected – exiting.")
     print(f"[INFO] Selected image : {img_path}")
 
+    # Prefer a quantized encoder if present; otherwise use the standard one.
     ckpt_dir = os.path.join("checkpoints", args.model_size)
-    enc_path = os.path.join(ckpt_dir, "image_encoder.onnx")
-    dec_path = os.path.join(ckpt_dir, "image_decoder.onnx")
-    if not (os.path.exists(enc_path) and os.path.exists(dec_path)):
-        sys.exit(f"ERROR: ONNX files not found in {ckpt_dir}")
+    enc_candidates = [
+        os.path.join(ckpt_dir, "image_encoder.int8.onnx"),
+        os.path.join(ckpt_dir, "image_encoder.onnx"),
+    ]
+    enc_path = next((p for p in enc_candidates if os.path.exists(p)), None)
+    if enc_path is None:
+        sys.exit(f"ERROR: Encoder ONNX not found in {ckpt_dir}")
 
-    sess_enc = _make_session(enc_path)
-    sess_dec = _make_session(dec_path)
+    dec_path = os.path.join(ckpt_dir, "image_decoder.onnx")
+    if not os.path.exists(dec_path):
+        sys.exit(f"ERROR: Decoder ONNX not found in {ckpt_dir}")
+
+    sess_enc = _make_encoder_session(enc_path)
+    sess_dec = _make_decoder_session(dec_path)
 
     enc_input_name = sess_enc.get_inputs()[0].name
     enc_h, enc_w = sess_enc.get_inputs()[0].shape[2:]
@@ -97,9 +132,9 @@ def main():
     enc_dict = dict(zip(enc_out_names, enc_vals))
     print(f"[INFO] Encoder time : {(time.time()-t0)*1000:.1f} ms")
 
-    img_embed = np.ascontiguousarray(enc_dict["image_embeddings"].astype(np.float32))   # [1,256,64,64]
-    feats0    = np.ascontiguousarray(enc_dict["high_res_features1"].astype(np.float32)) # [1,32,256,256]
-    feats1    = np.ascontiguousarray(enc_dict["high_res_features2"].astype(np.float32)) # [1,64,128,128]
+    img_embed = np.ascontiguousarray(enc_dict["image_embeddings"].astype(np.float32))
+    feats0    = np.ascontiguousarray(enc_dict["high_res_features1"].astype(np.float32))
+    feats1    = np.ascontiguousarray(enc_dict["high_res_features2"].astype(np.float32))
 
     for nm, arr, shp in [
         ("image_embed", img_embed, (1,256,64,64)),
@@ -114,12 +149,14 @@ def main():
     disp_w, disp_h = int(W_org*scale), int(H_org*scale)
     disp_base = cv2.resize(img_bgr, (disp_w, disp_h))
 
+    # Bind decoder by name
+    dec_inputs_list = [i.name for i in sess_dec.get_inputs()]
     DEC_KEYS = {
-        "point_coords":     next(n for n in [i.name for i in sess_dec.get_inputs()] if "point_coords" in n),
-        "point_labels":     next(n for n in [i.name for i in sess_dec.get_inputs()] if "point_labels" in n),
-        "image_embed":      next(n for n in [i.name for i in sess_dec.get_inputs()] if "image_embed" in n),
-        "high_res_feats_0": next(n for n in [i.name for i in sess_dec.get_inputs()] if "high_res_feats_0" in n),
-        "high_res_feats_1": next(n for n in [i.name for i in sess_dec.get_inputs()] if "high_res_feats_1" in n),
+        "point_coords":     next(n for n in dec_inputs_list if "point_coords" in n),
+        "point_labels":     next(n for n in dec_inputs_list if "point_labels" in n),
+        "image_embed":      next(n for n in dec_inputs_list if "image_embed" in n),
+        "high_res_feats_0": next(n for n in dec_inputs_list if "high_res_feats_0" in n),
+        "high_res_feats_1": next(n for n in dec_inputs_list if "high_res_feats_1" in n),
     }
 
     points, labels = [], []
@@ -128,10 +165,9 @@ def main():
         if not points:
             cv2.imshow("SAM-2 Demo", disp_base); return
         pts, lbl = prepare_points(points, labels, (H_org,W_org), (enc_h,enc_w))
-        # Ensure exact dtype & contiguity
         pts = np.ascontiguousarray(pts.astype(np.float32))
         lbl = np.ascontiguousarray(lbl.astype(np.float32))
-        dec_inputs = {
+        inp = {
             DEC_KEYS["point_coords"]:     pts,
             DEC_KEYS["point_labels"]:     lbl,
             DEC_KEYS["image_embed"]:      img_embed,
@@ -139,7 +175,7 @@ def main():
             DEC_KEYS["high_res_feats_1"]: feats1,
         }
         t = time.time()
-        obj_ptr, mask_for_mem, pred_low = sess_dec.run(None, dec_inputs)
+        _, _, pred_low = sess_dec.run(None, inp)
         print(f"[INFO] Decoder time : {(time.time()-t)*1000:.1f} ms")
         mask256 = pred_low[0,0]
         mask = cv2.resize(mask256, (W_org, H_org))
@@ -162,7 +198,7 @@ def main():
         pts,lbl = prepare_rectangle((x1,y1,x2,y2),(H_org,W_org),(enc_h,enc_w))
         pts = np.ascontiguousarray(pts.astype(np.float32))
         lbl = np.ascontiguousarray(lbl.astype(np.float32))
-        dec_inputs = {
+        inp = {
             DEC_KEYS["point_coords"]:     pts,
             DEC_KEYS["point_labels"]:     lbl,
             DEC_KEYS["image_embed"]:      img_embed,
@@ -170,7 +206,7 @@ def main():
             DEC_KEYS["high_res_feats_1"]: feats1,
         }
         t = time.time()
-        obj_ptr, mask_for_mem, pred_low = sess_dec.run(None, dec_inputs)
+        _, _, pred_low = sess_dec.run(None, inp)
         print(f"[INFO] Decoder time : {(time.time()-t)*1000:.1f} ms")
         mask256 = pred_low[0,0]
         mask = cv2.resize(mask256,(W_org,H_org))
