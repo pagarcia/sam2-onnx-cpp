@@ -35,6 +35,21 @@ pip install torch onnx onnxruntime onnxscript hydra-core pillow tqdm iopath open
 ```
 *Note: The `opencv-python` and `pyqt5` installs are needed for the Python test scripts.*
 
+For GPU installatio: instad of onnx, onnxruntime, install:
+
+```bash
+pip install "onnxruntime-gpu==1.22.0"
+
+pip install `
+  "nvidia-cuda-runtime-cu12==12.5.82" `
+  "nvidia-cuda-nvrtc-cu12==12.5.82" `
+  "nvidia-cublas-cu12==12.5.3.2" `
+  "nvidia-cufft-cu12==11.4.1.4" `
+  "nvidia-curand-cu12==10.3.10.19" `
+  "nvidia-nvjitlink-cu12==12.5.82" `
+  "nvidia-cudnn-cu12==9.8.0.87"
+```
+
 ### 4. Generate ONNX Files
 
 Export the ONNX files by running:

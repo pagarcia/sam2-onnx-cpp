@@ -25,6 +25,11 @@ import numpy as np
 import onnxruntime as ort
 from onnxruntime import InferenceSession
 
+# Make pip-provided CUDA/cuDNN/TensorRT DLLs discoverable for this process
+try:
+    ort.preload_dlls()
+except Exception:
+    pass
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Info / environment
@@ -43,6 +48,20 @@ def set_cv2_threads(n: int = 1) -> None:
     except Exception:
         pass
 
+def _default_providers(device_id: int = 0):
+    av = ort.get_available_providers()
+    if "CUDAExecutionProvider" in av:
+        cuda_opts = {
+            "device_id": device_id,
+            "arena_extend_strategy": "kNextPowerOfTwo",
+            "cudnn_conv_algo_search": "HEURISTIC",
+            "do_copy_in_default_stream": "1",
+        }
+        return [("CUDAExecutionProvider", cuda_opts), "CPUExecutionProvider"]
+    if "CoreMLExecutionProvider" in av:
+        # No special options needed; keep CPU as fallback
+        return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ORT sessions
@@ -50,17 +69,16 @@ def set_cv2_threads(n: int = 1) -> None:
 
 def make_encoder_session(path: str,
                          providers: Optional[Iterable[str]] = None) -> InferenceSession:
-    """
-    Fast encoder session (aggressive graph opts, tuned threading).
-    """
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
     so.intra_op_num_threads = max(1, (os.cpu_count() or 8) - 1)
     so.inter_op_num_threads = 1
     so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-    providers = list(providers) if providers else ["CPUExecutionProvider"]
+
+    providers = list(providers) if providers else _default_providers()
     print(f"[INFO] Loading {os.path.basename(path)} [encoder] with providers={providers}")
     sess = InferenceSession(path, sess_options=so, providers=providers)
+    print("[INFO] Active providers:", sess.get_providers())
     print("[INFO] Inputs:", [(i.name, i.shape, i.type) for i in sess.get_inputs()])
     print("[INFO] Outputs:", [o.name for o in sess.get_outputs()])
     return sess
@@ -69,20 +87,17 @@ def make_encoder_session(path: str,
 def make_safe_session(path: str,
                       providers: Optional[Iterable[str]] = None,
                       tag: str = "safe") -> InferenceSession:
-    """
-    Conservative session (no risky fusions). Use for decoder/memory graphs.
-    """
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
-    # This fusion has caused bad Gemm shapes in this project; keep it off.
     so.add_session_config_entry("session.disable_gemm_fast_gelu_fusion", "1")
-    providers = list(providers) if providers else ["CPUExecutionProvider"]
+
+    providers = list(providers) if providers else _default_providers()
     print(f"[INFO] Loading {os.path.basename(path)} [{tag}] with providers={providers}")
     sess = InferenceSession(path, sess_options=so, providers=providers)
+    print("[INFO] Active providers:", sess.get_providers())
     print("[INFO] Inputs:", [(i.name, i.shape, i.type) for i in sess.get_inputs()])
     print("[INFO] Outputs:", [o.name for o in sess.get_outputs()])
     return sess
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Paths / small helpers
@@ -90,15 +105,11 @@ def make_safe_session(path: str,
 
 def prefer_quantized_encoder(ckpt_dir: str,
                              base_name: str = "image_encoder") -> Optional[str]:
-    """
-    Prefer an int8 encoder ONNX if present, otherwise the float model.
-    Returns the chosen path or None if neither exists.
-    """
-    candidates = [
-        os.path.join(ckpt_dir, f"{base_name}.int8.onnx"),
-        os.path.join(ckpt_dir, f"{base_name}.onnx"),
-    ]
-    for p in candidates:
+    gpu = "CUDAExecutionProvider" in ort.get_available_providers()
+    order = [f"{base_name}.onnx", f"{base_name}.int8.onnx"] if gpu else \
+            [f"{base_name}.int8.onnx", f"{base_name}.onnx"]
+    for fname in order:
+        p = os.path.join(ckpt_dir, fname)
         if os.path.exists(p):
             return p
     return None
