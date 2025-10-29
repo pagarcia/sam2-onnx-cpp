@@ -42,28 +42,14 @@ Export the ONNX files by running:
 python export/onnx_export.py --model_size tiny
 ```
 This produces four `.onnx` files in `checkpoints/tiny/`:
-- `image_encoder_tiny.onnx`
-- `image_decoder_tiny.onnx`
-- `memory_attention_tiny.onnx`
-- `memory_encoder_tiny.onnx`
+- `image_encoder.onnx`
+- `image_decoder.onnx`
+- `memory_attention.onnx`
+- `memory_encoder.onnx`
 
 Other than `tiny`, you can choose `small`, `base_plus` and `large`.
 
-### 5. (Optional) Simplify the ONNX Models
-
-Some shape inference warnings or segmentation faults (especially on macOS) may occur due to dynamic shape paths. To mitigate this, install [onnx-simplifier](https://github.com/daquexian/onnx-simplifier):
-```bash
-pip install onnxsim
-```
-Then, for each exported file (using the **tiny** variant as an example), run:
-```bash
-python -m onnxsim checkpoints/tiny/image_encoder_tiny.onnx checkpoints/tiny/image_encoder_tiny_simplified.onnx
-python -m onnxsim checkpoints/tiny/image_decoder_tiny.onnx checkpoints/tiny/image_decoder_tiny_simplified.onnx
-python -m onnxsim checkpoints/tiny/memory_encoder_tiny.onnx checkpoints/tiny/memory_encoder_tiny_simplified.onnx
-python -m onnxsim checkpoints/tiny/memory_attention_tiny.onnx checkpoints/tiny/memory_attention_tiny_simplified.onnx
-```
-
-### 6. Run Python Tests
+### 5. Run Python Tests
 
 Test the exported ONNX models by running:
 ```bash
@@ -77,20 +63,20 @@ python export/onnx_test_video.py --prompt bounding_box --model_size tiny
 - The video test requires a short video clip (e.g. `.mkv`, `.mp4`, etc.).  
 You can find short video samples at [filesamples.com](https://filesamples.com/formats/mkv) and [sample-videos.com](https://www.sample-videos.com/).
 
-### 7. Compile & Run the C++ Wrapper
+### 6. Compile & Run the C++ Wrapper
 
-#### 7.1 Download onnxruntime  
+#### 6.1 Download onnxruntime  
 Download and unzip the file from [onnxruntime-win-x64-gpu-1.22.0.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-gpu-1.22.0.zip) (see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0)).  
 Extract to a location like `C:\Program Files\onnxruntime-win-x64-gpu-1.22.0`.
 
-#### 7.2 OpenCV  
+#### 6.2 OpenCV  
 Install OpenCV (or point to an existing installation), e.g. located at `C:\Program Files\OpenCV\Release`.
 
-#### 7.3 cuDNN  
+#### 6.3 cuDNN  
 Download and install cuDNN from https://developer.nvidia.com/cudnn-downloads?target_os=Windows&target_arch=x86_64&target_version=10&target_type=exe_local.
 It should match your version of CUDA.
 
-#### 7.4 CMake Configuration and Build
+#### 6.4 CMake Configuration and Build
 
 Inside the `cpp` folder, create a `build_release` folder and run:
 ```bash
@@ -135,7 +121,7 @@ From `C:/Program Files/OpenCV/Release`:
 - `opencv_imgproc4110.dll`
 - `opencv_videoio4110.dll`
 
-#### 7.5 Run the Compiled Executable
+#### 6.5 Run the Compiled Executable
 
 The compiled executable typically goes to `cpp/build_release/bin/Release`. For example, run:
 ```bash
@@ -170,7 +156,7 @@ source sam2_env/bin/activate
 
 With the virtual environment activated, install the required packages:
 ```bash
-pip install torch onnx onnxruntime hydra-core pillow tqdm iopath opencv-python pyqt5
+pip install torch onnx onnxruntime onnxscript hydra-core pillow tqdm iopath opencv-python pyqt5
 ```
 
 ### 4. Generate ONNX Files
@@ -180,29 +166,14 @@ Export the ONNX files by running:
 python export/onnx_export.py --model_size tiny
 ```
 This produces four `.onnx` files in `checkpoints/tiny/`:
-- `image_encoder_tiny.onnx`
-- `image_decoder_tiny.onnx`
-- `memory_attention_tiny.onnx`
-- `memory_encoder_tiny.onnx`
+- `image_encoder.onnx`
+- `image_decoder.onnx`
+- `memory_attention.onnx`
+- `memory_encoder.onnx`
 
 Other than `tiny`, you can choose `small`, `base_plus` and `large`.
 
-### 5. (Optional) Simplify the ONNX Models
-
-To prune or unify dynamic shape paths, install onnx-simplifier:
-```bash
-pip install onnxsim
-```
-Then run the following commands for each file:
-```bash
-python -m onnxsim checkpoints/tiny/image_encoder_tiny.onnx checkpoints/tiny/image_encoder_tiny_simplified.onnx
-python -m onnxsim checkpoints/tiny/image_decoder_tiny.onnx checkpoints/tiny/image_decoder_tiny_simplified.onnx
-python -m onnxsim checkpoints/tiny/memory_encoder_tiny.onnx checkpoints/tiny/memory_encoder_tiny_simplified.onnx
-python -m onnxsim checkpoints/tiny/memory_attention_tiny.onnx checkpoints/tiny/memory_attention_tiny_simplified.onnx
-```
-Repeat for each file as needed.
-
-### 6. Run Python Tests
+### 5. Run Python Tests
 
 Test the exported ONNX models by running:
 ```bash
@@ -216,19 +187,19 @@ python export/onnx_test_video.py --prompt bounding_box --model_size tiny
 - The video test requires a short video clip (e.g. `.mkv`, `.mp4`, etc.).  
 Short video samples are available at [filesamples.com](https://filesamples.com/formats/mkv) and [sample-videos.com](https://www.sample-videos.com/).
 
-### 7. Compile & Run the C++ Wrapper
+### 6. Compile & Run the C++ Wrapper
 
-#### 7.1 Download onnxruntime  
+#### 6.1 Download onnxruntime  
 Download and unzip [onnxruntime-win-arm64-1.21.0.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-win-arm64-1.21.0.zip) (see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.21.0)) into the `/opt/` directory.
 
-#### 7.2 Install OpenCV
+#### 6.2 Install OpenCV
 
 Install OpenCV using Homebrew:
 ```bash
 brew install opencv
 ```
 
-#### 7.3 Prepare the Models
+#### 6.3 Prepare the Models
 
 Create a `models` folder inside the `cpp` folder. Copy the four exported `.onnx` files into it and rename them as follows:
 - `image_decoder.onnx`
@@ -236,11 +207,11 @@ Create a `models` folder inside the `cpp` folder. Copy the four exported `.onnx`
 - `memory_attention.onnx`
 - `memory_encoder.onnx`
 
-#### 7.4 Set Up Build Folders
+#### 6.4 Set Up Build Folders
 
 Inside the `cpp` folder, create both a `build_release` folder and a `package` folder.
 
-#### 7.5 CMake Configuration and Build
+#### 6.5 CMake Configuration and Build
 
 In the `cpp` folder, run:
 ```bash
@@ -251,14 +222,14 @@ Then build the project:
 cmake --build build_release
 ```
 
-#### 7.6 Create the Distributable App
+#### 6.6 Create the Distributable App
 
 Generate the app by running:
 ```bash
 cmake --install build_release --prefix $HOME/Documents/sam2-onnx-cpp/cpp/package
 ```
 
-#### 7.7 Run the App
+#### 6.7 Run the App
 
 To run the app, either double-click it or run from the terminal.
 
