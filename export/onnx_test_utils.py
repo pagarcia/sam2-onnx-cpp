@@ -2,22 +2,22 @@
 """
 Shared utilities for onnx_test_image.py and onnx_test_video.py.
 
-Pulled-out common functionality:
-- System info print
-- ONNX Runtime session builders (fast encoder / safe others)
-- Preprocessing (BGR -> normalized NCHW tensor)
-- Prompt preparation (points/box) from image space -> encoder space
-- Overlay helpers
-- Robust encoder/decoder runners (name-agnostic I/O mapping)
-- Small convenience helpers (paths, display scaling, OpenCV threads)
+Default behavior by platform:
+- Windows/Linux: Prefer CUDA if available, else CPU.
+- macOS: Default to CPU (Core ML has 16,384-per-axis limits that block big parts of SAM2).
+  You can opt-in to Core ML for the encoder with SAM2_ORT_ACCEL=coreml.
+  Decoder/memory remain on CPU by default to avoid 0-dim/dynamic shape issues.
 
-All functions are NumPy-first and keep arrays contiguous float32 where relevant.
+Env toggles:
+  SAM2_ORT_ACCEL = auto | cpu | cuda | coreml   (default: auto)
+  SAM2_ORT_COREML_ALL = 0 | 1   (default: 0)  # if 1, try CoreML on every session (not recommended)
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from typing import Dict, Iterable, Optional, Tuple
 
 import cv2
@@ -25,59 +25,131 @@ import numpy as np
 import onnxruntime as ort
 from onnxruntime import InferenceSession
 
-# Make pip-provided CUDA/cuDNN/TensorRT DLLs discoverable for this process
+# Make pip-provided CUDA/cuDNN/TensorRT DLLs discoverable for this process (Windows)
 try:
     ort.preload_dlls()
 except Exception:
     pass
+
+ACCEL = os.getenv("SAM2_ORT_ACCEL", "auto").lower()            # 'auto' | 'cpu' | 'cuda' | 'coreml'
+COREML_ALL = os.getenv("SAM2_ORT_COREML_ALL", "0").lower() in ("1", "true", "yes")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Info / environment
 # ──────────────────────────────────────────────────────────────────────────────
 
 def print_system_info() -> None:
-    """Print a tiny system banner (OS + ORT providers)."""
     print("[INFO] OS :", sys.platform)
     print("[INFO] ONNX Runtime providers (available) :", ort.get_available_providers())
 
 
 def set_cv2_threads(n: int = 1) -> None:
-    """Keep OpenCV from oversubscribing threads."""
     try:
         cv2.setNumThreads(n)
     except Exception:
         pass
 
-def _default_providers(device_id: int = 0):
-    av = ort.get_available_providers()
-    if "CUDAExecutionProvider" in av:
-        cuda_opts = {
-            "device_id": device_id,
-            "arena_extend_strategy": "kNextPowerOfTwo",
-            "cudnn_conv_algo_search": "HEURISTIC",
-            "do_copy_in_default_stream": "1",
-        }
-        return [("CUDAExecutionProvider", cuda_opts), "CPUExecutionProvider"]
-    if "CoreMLExecutionProvider" in av:
-        # No special options needed; keep CPU as fallback
-        return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
-    return ["CPUExecutionProvider"]
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Provider presets
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _cuda_providers(device_id: int = 0):
+    return [("CUDAExecutionProvider", {
+        "device_id": device_id,
+        "arena_extend_strategy": "kNextPowerOfTwo",
+        "cudnn_conv_algo_search": "HEURISTIC",
+        "do_copy_in_default_stream": "1",
+    }), "CPUExecutionProvider"]
+
+def _coreml_mlprogram_opts(static: bool = True):
+    return [("CoreMLExecutionProvider", {
+        "ModelFormat": "MLProgram",
+        "MLComputeUnits": "ALL",
+        "RequireStaticInputShapes": "1" if static else "0",
+        "EnableOnSubgraphs": "0",
+        # "ModelCacheDirectory": "cache/coreml",  # Optional: enable if you want disk caching
+    }), "CPUExecutionProvider"]
+
+def _coreml_nn_opts(static: bool = True):
+    return [("CoreMLExecutionProvider", {
+        "ModelFormat": "NeuralNetwork",
+        "MLComputeUnits": "ALL",
+        "RequireStaticInputShapes": "1" if static else "0",
+        "EnableOnSubgraphs": "0",
+    }), "CPUExecutionProvider"]
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ORT sessions
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _create_session_with_fallback(path: str,
+                                  so: ort.SessionOptions,
+                                  primary_providers,
+                                  fallback_providers=("CPUExecutionProvider",),
+                                  tag: str = "") -> InferenceSession:
+    try:
+        return InferenceSession(path, sess_options=so, providers=list(primary_providers))
+    except Exception as e:
+        print("*************** EP Error ***************")
+        print(f"EP Error {type(e).__name__} : {getattr(e, 'args', [''])[0]} "
+              f"when using {list(primary_providers)}")
+        print(f"Falling back to {list(fallback_providers)} and retrying.")
+        print("****************************************")
+        return InferenceSession(path, sess_options=so, providers=list(fallback_providers))
+
+
 def make_encoder_session(path: str,
                          providers: Optional[Iterable[str]] = None) -> InferenceSession:
+    path = str(Path(path).resolve())
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
     so.intra_op_num_threads = max(1, (os.cpu_count() or 8) - 1)
     so.inter_op_num_threads = 1
     so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
 
-    providers = list(providers) if providers else _default_providers()
-    print(f"[INFO] Loading {os.path.basename(path)} [encoder] with providers={providers}")
-    sess = InferenceSession(path, sess_options=so, providers=providers)
+    av = ort.get_available_providers()
+
+    # Decide provider attempts (ordered) based on env + availability
+    if providers is not None:
+        attempt_lists = [list(providers)]
+    else:
+        if ACCEL == "cpu":
+            attempt_lists = [["CPUExecutionProvider"]]
+        elif ACCEL == "cuda" and "CUDAExecutionProvider" in av:
+            attempt_lists = [_cuda_providers()]
+        elif ACCEL == "coreml" and "CoreMLExecutionProvider" in av:
+            attempt_lists = [_coreml_mlprogram_opts(static=True),
+                             _coreml_nn_opts(static=True),
+                             ["CPUExecutionProvider"]]
+        else:
+            # auto:
+            if "CUDAExecutionProvider" in av:
+                attempt_lists = [_cuda_providers()]
+            elif "CoreMLExecutionProvider" in av:
+                # Default on macOS is CPU to avoid CoreML compile stalls; only try CoreML when explicitly asked
+                attempt_lists = [["CPUExecutionProvider"]]
+            else:
+                attempt_lists = [["CPUExecutionProvider"]]
+
+    last_err = None
+    for primary in attempt_lists:
+        print(f"[INFO] Loading {os.path.basename(path)} [encoder] with providers={primary}")
+        try:
+            sess = InferenceSession(path, sess_options=so, providers=primary)
+            print("[INFO] Active providers:", sess.get_providers())
+            print("[INFO] Inputs:", [(i.name, i.shape, i.type) for i in sess.get_inputs()])
+            print("[INFO] Outputs:", [o.name for o in sess.get_outputs()])
+            return sess
+        except Exception as e:
+            last_err = e
+            print("*************** EP Error ***************")
+            print(f"EP Error {type(e).__name__} : {getattr(e, 'args', [''])[0]} when using {primary}")
+            print("****************************************")
+
+    print("[WARN] Encoder: all preferred providers failed; using CPUExecutionProvider.")
+    sess = InferenceSession(path, sess_options=so, providers=["CPUExecutionProvider"])
     print("[INFO] Active providers:", sess.get_providers())
     print("[INFO] Inputs:", [(i.name, i.shape, i.type) for i in sess.get_inputs()])
     print("[INFO] Outputs:", [o.name for o in sess.get_outputs()])
@@ -87,17 +159,45 @@ def make_encoder_session(path: str,
 def make_safe_session(path: str,
                       providers: Optional[Iterable[str]] = None,
                       tag: str = "safe") -> InferenceSession:
+    path = str(Path(path).resolve())
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
     so.add_session_config_entry("session.disable_gemm_fast_gelu_fusion", "1")
 
-    providers = list(providers) if providers else _default_providers()
-    print(f"[INFO] Loading {os.path.basename(path)} [{tag}] with providers={providers}")
-    sess = InferenceSession(path, sess_options=so, providers=providers)
+    av = ort.get_available_providers()
+
+    if providers is not None:
+        primary = list(providers)
+    else:
+        if ACCEL == "cpu":
+            primary = ["CPUExecutionProvider"]
+        elif ACCEL == "cuda" and "CUDAExecutionProvider" in av:
+            primary = _cuda_providers()
+        elif ACCEL == "coreml" and "CoreMLExecutionProvider" in av:
+            # By default, keep decoder/memory on CPU due to 0-dim/dynamic issues.
+            if COREML_ALL:
+                # If you explicitly want CoreML everywhere (not recommended), try it; fallback will catch failures.
+                primary = _coreml_mlprogram_opts(static=True)[0:1] + ["CPUExecutionProvider"]
+            else:
+                if tag in ("decoder", "memory_encoder", "memory_attention", "safe"):
+                    primary = ["CPUExecutionProvider"]
+                else:
+                    primary = _coreml_mlprogram_opts(static=True)[0:1] + ["CPUExecutionProvider"]
+        else:
+            # auto:
+            if "CUDAExecutionProvider" in av:
+                primary = _cuda_providers()
+            else:
+                # On macOS auto: CPU only (fast, reliable)
+                primary = ["CPUExecutionProvider"]
+
+    print(f"[INFO] Loading {os.path.basename(path)} [{tag}] with providers={primary}")
+    sess = _create_session_with_fallback(path, so, primary, ("CPUExecutionProvider",), tag=tag)
     print("[INFO] Active providers:", sess.get_providers())
     print("[INFO] Inputs:", [(i.name, i.shape, i.type) for i in sess.get_inputs()])
     print("[INFO] Outputs:", [o.name for o in sess.get_outputs()])
     return sess
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Paths / small helpers
@@ -105,9 +205,27 @@ def make_safe_session(path: str,
 
 def prefer_quantized_encoder(ckpt_dir: str,
                              base_name: str = "image_encoder") -> Optional[str]:
-    gpu = "CUDAExecutionProvider" in ort.get_available_providers()
-    order = [f"{base_name}.onnx", f"{base_name}.int8.onnx"] if gpu else \
-            [f"{base_name}.int8.onnx", f"{base_name}.onnx"]
+    """
+    Pick the best encoder artifact for the current acceleration mode.
+    - If accelerating (CUDA or explicit CoreML), prefer float .onnx over int8.
+    - If CPU, prefer int8 when available.
+    """
+    av = ort.get_available_providers()
+
+    # Are we actually trying to accelerate?
+    accel = False
+    if ACCEL == "cuda" and "CUDAExecutionProvider" in av:
+        accel = True
+    elif ACCEL == "coreml" and "CoreMLExecutionProvider" in av:
+        accel = True
+    elif ACCEL == "auto" and "CUDAExecutionProvider" in av:
+        accel = True  # auto only accelerates by default for CUDA; mac auto stays CPU
+
+    if accel:
+        order = [f"{base_name}.onnx", f"{base_name}.int8.onnx"]
+    else:
+        order = [f"{base_name}.int8.onnx", f"{base_name}.onnx"]
+
     for fname in order:
         p = os.path.join(ckpt_dir, fname)
         if os.path.exists(p):
@@ -116,7 +234,6 @@ def prefer_quantized_encoder(ckpt_dir: str,
 
 
 def as_f32c(a: np.ndarray) -> np.ndarray:
-    """Return contiguous float32 view/copy of array."""
     a = a.astype(np.float32, copy=False)
     return np.ascontiguousarray(a)
 
@@ -130,9 +247,6 @@ _STD  = np.array([0.229, 0.224, 0.225], np.float32)
 
 def bgr_to_input_tensor(img_bgr: np.ndarray,
                         enc_hw: Tuple[int, int]) -> np.ndarray:
-    """
-    Convert BGR image to normalized float32 tensor [1,3,H,W] for the encoder.
-    """
     h_enc, w_enc = enc_hw
     img_resized = cv2.resize(img_bgr, (w_enc, h_enc))
     img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
@@ -143,9 +257,6 @@ def bgr_to_input_tensor(img_bgr: np.ndarray,
 
 def prepare_image(img_bgr: np.ndarray,
                   enc_hw: Tuple[int, int]) -> Tuple[np.ndarray, Tuple[int, int]]:
-    """
-    Convenience wrapper returning (input_tensor, (H_orig, W_orig)).
-    """
     H_org, W_org = img_bgr.shape[:2]
     return bgr_to_input_tensor(img_bgr, enc_hw), (H_org, W_org)
 
@@ -153,9 +264,6 @@ def prepare_image(img_bgr: np.ndarray,
 def compute_display_base(img_bgr: np.ndarray,
                          max_side: int = 1200
                          ) -> Tuple[np.ndarray, float]:
-    """
-    Create a display-sized copy and its scale factor.
-    """
     H, W = img_bgr.shape[:2]
     scale = min(1.0, max_side / max(W, H))
     disp = cv2.resize(img_bgr, (int(W * scale), int(H * scale)))
@@ -171,12 +279,6 @@ def prepare_points(points: Iterable[Tuple[int, int]],
                    img_size: Tuple[int, int],
                    enc_size: Tuple[int, int]
                    ) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Map user points (pixels in original image) to encoder resolution.
-    Returns:
-      coords: [1, N, 2] float32
-      labels: [1, N]   float32
-    """
     if not points:
         return (np.zeros((1, 0, 2), np.float32), np.zeros((1, 0), np.float32))
     pts = np.asarray(points, dtype=np.float32)
@@ -192,10 +294,6 @@ def prepare_box_prompt(rect: Optional[Tuple[int, int, int, int]],
                        img_size: Tuple[int, int],
                        enc_size: Tuple[int, int]
                        ) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Convert (x1,y1,x2,y2) box into SAM2 'box as 2 points' prompt.
-    Labels are [2, 3] per SAM convention (top-left, bottom-right).
-    """
     if rect is None:
         return (np.zeros((1, 0, 2), np.float32), np.zeros((1, 0), np.float32))
     x1, y1, x2, y2 = rect
@@ -208,7 +306,6 @@ def prepare_box_prompt(rect: Optional[Tuple[int, int, int, int]],
     return pts[np.newaxis, ...], lbl[np.newaxis, ...]
 
 
-# Backwards-compat alias for the image test script’s name
 def prepare_rectangle(rect, img_size, enc_size):
     return prepare_box_prompt(rect, img_size, enc_size)
 
@@ -219,14 +316,6 @@ def prepare_rectangle(rect, img_size, enc_size):
 
 def run_encoder(sess_enc: InferenceSession,
                 input_tensor: np.ndarray) -> Dict[str, np.ndarray]:
-    """
-    Execute the encoder and return a name->array dict using the model's output names:
-      - "image_embeddings"
-      - "high_res_features1"
-      - "high_res_features2"
-      - "current_vision_feat"
-      - "vision_pos_embed"
-    """
     enc_input_name = sess_enc.get_inputs()[0].name
     out_names = [o.name for o in sess_enc.get_outputs()]
     values = sess_enc.run(None, {enc_input_name: as_f32c(input_tensor)})
@@ -234,17 +323,13 @@ def run_encoder(sess_enc: InferenceSession,
 
 
 def _decoder_io_names(sess_dec: InferenceSession) -> Dict[str, str]:
-    """
-    Robustly resolve input names (some exporters add suffixes). Falls back to
-    canonical names if an exact match isn't found.
-    """
     inps = [i.name for i in sess_dec.get_inputs()]
 
     def find(key: str) -> str:
         for nm in inps:
             if key in nm:
                 return nm
-        return key  # fallback to canonical
+        return key
 
     return {
         "point_coords":     find("point_coords"),
@@ -261,11 +346,6 @@ def run_decoder(sess_dec: InferenceSession,
                 image_embed: np.ndarray,
                 high_res_feats_0: np.ndarray,
                 high_res_feats_1: np.ndarray):
-    """
-    Execute the image decoder with dynamic I/O name resolution.
-    If point_coords/labels are None, feeds an empty prompt of shape [1,0,...].
-    Returns (obj_ptr, mask_for_mem, pred_mask) as produced by the model.
-    """
     io = _decoder_io_names(sess_dec)
 
     if point_coords is None or point_labels is None:
@@ -289,11 +369,6 @@ def run_decoder(sess_dec: InferenceSession,
 def green_overlay(bgr: np.ndarray,
                   mask255: np.ndarray,
                   alpha: float = 0.5) -> np.ndarray:
-    """
-    Alpha-blend a solid green overlay where mask > 0.
-    Accepts masks in {0,1}, {0,255}, or any nonzero-valued mask.
-    """
-    # treat any positive value as foreground
     fg = (mask255 > 0)
     color = np.zeros_like(bgr)
     color[fg] = (0, 255, 0)
