@@ -6,143 +6,190 @@
 #include <stdexcept>
 #include <cmath>
 #include <algorithm>
-#include <numeric>      // for std::iota
-#include <execution>    // for std::execution::par (requires C++17)
+#include <numeric>    // std::iota
+#include <thread>
+#include <atomic>
+#include <exception>
+
+namespace sam2_detail {
+
+// Minimal portable parallel_for (no external deps, works on macOS & Windows).
+template <class F>
+inline void parallel_for(std::size_t begin, std::size_t end, F&& fn, unsigned nthreads = 0) {
+    if (end <= begin) return;
+
+    if (nthreads == 0) nthreads = std::max(1u, std::thread::hardware_concurrency());
+    const std::size_t total = end - begin;
+
+    // Small ranges: do it serially (avoids thread overhead)
+    if (nthreads <= 1 || total < 64) {
+        for (std::size_t i = begin; i < end; ++i) fn(i);
+        return;
+    }
+
+    const std::size_t chunk = (total + nthreads - 1) / nthreads;
+    std::vector<std::thread> threads;
+    threads.reserve(nthreads);
+
+    std::atomic<bool> failed{false};
+    std::exception_ptr eptr = nullptr;
+
+    for (unsigned t = 0; t < nthreads; ++t) {
+        const std::size_t b = begin + t * chunk;
+        if (b >= end) break;
+        const std::size_t e = std::min(end, b + chunk);
+
+        threads.emplace_back([&, b, e]() {
+            try {
+                for (std::size_t i = b; i < e; ++i) {
+                    fn(i);
+                }
+            } catch (...) {
+                if (!failed.exchange(true)) {
+                    eptr = std::current_exception();
+                }
+            }
+        });
+    }
+
+    for (auto& th : threads) th.join();
+    if (eptr) std::rethrow_exception(eptr);
+}
+
+} // namespace sam2_detail
 
 template <typename T>
 class Image {
 public:
-    // Default constructor creates an empty image with 1 channel.
     Image() : width(0), height(0), channels(1) {}
 
-    // Constructor that creates an image of given width, height, and channel count.
     Image(int w, int h, int c = 1)
-        : width(w), height(h), channels(c), data(w * h * c) {}
+        : width(w), height(h), channels(c), data(static_cast<std::size_t>(w) * h * c) {
+        if (w < 0 || h < 0 || c <= 0) throw std::runtime_error("Invalid image dimensions/channels");
+    }
 
-    // Constructor that creates an image from existing data.
-    // Throws if the data size does not match the given dimensions and channels.
     Image(int w, int h, int c, const std::vector<T>& d)
         : width(w), height(h), channels(c), data(d) {
-        if (data.size() != static_cast<size_t>(w * h * c)) {
+        if (w < 0 || h < 0 || c <= 0) throw std::runtime_error("Invalid image dimensions/channels");
+        if (data.size() != static_cast<std::size_t>(w) * h * c) {
             throw std::runtime_error("Data size does not match image dimensions and channel count.");
         }
     }
 
-    // Accessors for image dimensions.
-    int getWidth() const { return width; }
-    int getHeight() const { return height; }
+    int getWidth()    const { return width; }
+    int getHeight()   const { return height; }
     int getChannels() const { return channels; }
 
-    // Access the underlying vector containing the pixel data.
     const std::vector<T>& getData() const { return data; }
-    std::vector<T>& getData() { return data; }
+    std::vector<T>&       getData()       { return data; }
 
-    // For multi-channel images, planar means the output vector has all pixels for channel 0,
-    // then all for channel 1, etc. For a single-channel image, it's the same as the internal data.
+    // Interleaved (RGBRGB...) -> Planar ([all R][all G][all B])
     std::vector<T> getDataPlanarFormat() const {
-        size_t totalPixels = static_cast<size_t>(width * height);
-        size_t totalValues = totalPixels * channels;
-        // Reserve storage for the entire planar data.
-        std::vector<T> planarData(totalValues);
-        
-        if (channels == 1) {
-            // If the image is single-channel, just return a copy.
+        const std::size_t W = static_cast<std::size_t>(width);
+        const std::size_t H = static_cast<std::size_t>(height);
+        const std::size_t C = static_cast<std::size_t>(channels);
+
+        if (C == 1) {
+            // Single channel: return a copy as-is
             return data;
         }
-        
-        // Create a vector of indices [0, totalValues).
-        std::vector<size_t> indices(totalValues);
-        std::iota(indices.begin(), indices.end(), 0);
-        
-        // For each flat index i, determine the channel and pixel indices:
-        //   channel c = i / totalPixels
-        //   pixel index p = i % totalPixels
-        // In the interleaved format, the pixel value for channel c is stored at: p * channels + c.
-        std::for_each(std::execution::par, indices.begin(), indices.end(),
-            [this, totalPixels, &planarData](size_t i) {
-                size_t c = i / totalPixels;
-                size_t p = i % totalPixels;
-                planarData[i] = data[p * channels + c];
-            });
-        
-        return planarData;
+
+        const std::size_t totalPixels = W * H;
+        const std::size_t totalValues = totalPixels * C;
+        std::vector<T> planar(totalValues);
+
+        // Parallelize across channels
+        sam2_detail::parallel_for(0, C, [&](std::size_t c) {
+            const std::size_t dstOffset = c * totalPixels;
+            for (std::size_t y = 0; y < H; ++y) {
+                const std::size_t rowBase = y * W;
+                for (std::size_t x = 0; x < W; ++x) {
+                    const std::size_t p   = rowBase + x;
+                    const std::size_t src = p * C + c;
+                    planar[dstOffset + p] = data[src];
+                }
+            }
+        });
+
+        return planar;
     }
 
-    // Access pixel at (x, y) and channel c (row-major order).
-    // Index is computed as: (y * width + x)*channels + c.
+    // Accessors
     T& at(int x, int y, int c) {
-        if (x < 0 || x >= width || y < 0 || y >= height || c < 0 || c >= channels) {
-            throw std::out_of_range("Image index out of range.");
-        }
-        return data[(y * width + x) * channels + c];
+        boundsCheck(x, y, c);
+        return data[indexOf(x, y, c)];
     }
 
     const T& at(int x, int y, int c) const {
-        if (x < 0 || x >= width || y < 0 || y >= height || c < 0 || c >= channels) {
-            throw std::out_of_range("Image index out of range.");
-        }
-        return data[(y * width + x) * channels + c];
+        boundsCheck(x, y, c);
+        return data[indexOf(x, y, c)];
     }
 
-    // Convenience accessor for single-channel images.
     T& at(int x, int y) {
-        if (channels != 1)
-            throw std::runtime_error("at(x, y) is only available for single-channel images.");
+        if (channels != 1) throw std::runtime_error("at(x,y) only valid for single-channel images.");
         return at(x, y, 0);
     }
     const T& at(int x, int y) const {
-        if (channels != 1)
-            throw std::runtime_error("at(x, y) is only available for single-channel images.");
+        if (channels != 1) throw std::runtime_error("at(x,y) only valid for single-channel images.");
         return at(x, y, 0);
     }
 
-    // Resize function using bilinear interpolation (parallelized using C++17).
-    // It handles all channels by performing interpolation independently per channel.
-    // Returns a new Image<T> of dimensions (newWidth, newHeight) with the same channel count.
+    // Bilinear resize (parallelized by rows)
     Image<T> resize(int newWidth, int newHeight) const {
-        Image<T> resized(newWidth, newHeight, channels);
+        if (newWidth <= 0 || newHeight <= 0) {
+            throw std::runtime_error("resize: invalid target size");
+        }
 
-        // Compute scaling factors.
-        double scaleX = static_cast<double>(width) / newWidth;
-        double scaleY = static_cast<double>(height) / newHeight;
+        Image<T> out(newWidth, newHeight, channels);
 
-        // Create an index vector for rows.
-        std::vector<int> rowIndices(newHeight);
-        std::iota(rowIndices.begin(), rowIndices.end(), 0);
+        const double scaleX = static_cast<double>(width)  / static_cast<double>(newWidth);
+        const double scaleY = static_cast<double>(height) / static_cast<double>(newHeight);
 
-        // Parallelize the outer loop over rows.
-        std::for_each(std::execution::par, rowIndices.begin(), rowIndices.end(),
-            [&](int j) {
-                // Map the output row center to a source coordinate.
-                double srcY = (j + 0.5) * scaleY - 0.5;
-                int y0 = std::max(0, static_cast<int>(std::floor(srcY)));
-                int y1 = std::min(height - 1, y0 + 1);
-                double dy = srcY - y0;
+        sam2_detail::parallel_for(0, static_cast<std::size_t>(newHeight), [&](std::size_t jz) {
+            const int j = static_cast<int>(jz);
+            const double srcY = (static_cast<double>(j) + 0.5) * scaleY - 0.5;
+            int y0 = static_cast<int>(std::floor(srcY));
+            int y1 = y0 + 1;
+            if (y0 < 0) y0 = 0;
+            if (y1 >= height) y1 = height - 1;
+            const double dy = srcY - static_cast<double>(y0);
 
-                for (int i = 0; i < newWidth; i++) {
-                    double srcX = (i + 0.5) * scaleX - 0.5;
-                    int x0 = std::max(0, static_cast<int>(std::floor(srcX)));
-                    int x1 = std::min(width - 1, x0 + 1);
-                    double dx = srcX - x0;
+            for (int i = 0; i < newWidth; ++i) {
+                const double srcX = (static_cast<double>(i) + 0.5) * scaleX - 0.5;
+                int x0 = static_cast<int>(std::floor(srcX));
+                int x1 = x0 + 1;
+                if (x0 < 0) x0 = 0;
+                if (x1 >= width) x1 = width - 1;
+                const double dx = srcX - static_cast<double>(x0);
 
-                    // Process each channel separately.
-                    for (int c = 0; c < channels; c++) {
-                        double v00 = static_cast<double>(at(x0, y0, c));
-                        double v10 = static_cast<double>(at(x1, y0, c));
-                        double v01 = static_cast<double>(at(x0, y1, c));
-                        double v11 = static_cast<double>(at(x1, y1, c));
+                for (int c = 0; c < channels; ++c) {
+                    const double v00 = static_cast<double>(at(x0, y0, c));
+                    const double v10 = static_cast<double>(at(x1, y0, c));
+                    const double v01 = static_cast<double>(at(x0, y1, c));
+                    const double v11 = static_cast<double>(at(x1, y1, c));
 
-                        // Bilinear interpolation.
-                        double value = (1 - dx) * (1 - dy) * v00 +
-                                       dx       * (1 - dy) * v10 +
-                                       (1 - dx) * dy       * v01 +
-                                       dx       * dy       * v11;
-                        resized.at(i, j, c) = static_cast<T>(value);
-                    }
+                    // Bilinear
+                    const double v0 = v00 + (v10 - v00) * dx;
+                    const double v1 = v01 + (v11 - v01) * dx;
+                    const double v  = v0  + (v1  - v0)  * dy;
+
+                    out.at(i, j, c) = static_cast<T>(v);
                 }
             }
-        );
-        return resized;
+        });
+
+        return out;
+    }
+
+private:
+    inline std::size_t indexOf(int x, int y, int c) const {
+        return static_cast<std::size_t>((y * width + x) * channels + c);
+    }
+
+    inline void boundsCheck(int x, int y, int c) const {
+        if (x < 0 || x >= width || y < 0 || y >= height || c < 0 || c >= channels) {
+            throw std::out_of_range("Image index out of range.");
+        }
     }
 
 private:
