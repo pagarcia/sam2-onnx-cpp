@@ -18,6 +18,10 @@ static std::wstring strToWstr(const std::string &str)
 }
 #endif
 
+#ifdef __linux__
+  #include <dlfcn.h>  // for dlopen/dlsym on Linux
+#endif
+
 // --------------------
 // Constructor / Destructor
 // --------------------
@@ -373,34 +377,41 @@ std::vector<SAM2Node> SAM2::getSessionNodes(Ort::Session* session, bool isInput)
 // ─── SAM2::hasCudaDriver – lean release version ──────────────────────
 bool SAM2::hasCudaDriver()
 {
-    static int cached = -1;                // -1 ⇒ not checked yet
+    static int cached = -1;  // -1 ⇒ not checked yet
     if (cached != -1) return cached;
 
 #if defined(_WIN32)
-    /* 1. Load the runtime DLL shipped with the app (once, never unload) */
+    // Windows: try to load CUDA runtime DLL and query device count.
     static HMODULE hCUDART =
-        LoadLibraryExW(L"cudart64_12.dll", nullptr,
-                       LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+        LoadLibraryExW(L"cudart64_12.dll", nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if (!hCUDART) { cached = 0; return false; }
 
-    /* 2. Resolve cudaGetDeviceCount (cdecl) */
     using GetCnt = int (__cdecl*)(int*);
-    auto fn = reinterpret_cast<GetCnt>(
-        GetProcAddress(hCUDART, "cudaGetDeviceCount"));
+    auto fn = reinterpret_cast<GetCnt>(GetProcAddress(hCUDART, "cudaGetDeviceCount"));
     if (!fn) { cached = 0; return false; }
 
-#else   // ─── Linux / WSL ─────────────────────────────────────────────
-    static void* hCUDART = dlopen("libcudart.so.12", RTLD_LAZY | RTLD_LOCAL);
+    int n = 0;
+    int err = fn(&n); // 0 == cudaSuccess
+    cached = (err == 0 && n > 0) ? 1 : 0;
+    return cached;
+
+#elif defined(__linux__)
+    // Linux: dlopen libcudart and dlsym cudaGetDeviceCount.
+    void* hCUDART = dlopen("libcudart.so.12", RTLD_LAZY | RTLD_LOCAL);
     if (!hCUDART) { cached = 0; return false; }
 
     using GetCnt = int (*)(int*);
     auto fn = reinterpret_cast<GetCnt>(dlsym(hCUDART, "cudaGetDeviceCount"));
     if (!fn) { cached = 0; return false; }
-#endif
 
-    /* 3. Query device count */
     int n = 0;
-    int err = fn(&n);          // 0 == cudaSuccess
+    int err = fn(&n);
     cached = (err == 0 && n > 0) ? 1 : 0;
     return cached;
+
+#else
+    // macOS (and other platforms): CUDA is not available.
+    cached = 0;
+    return false;
+#endif
 }

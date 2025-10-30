@@ -1,0 +1,18 @@
+<!-- sam2-onnx-cpp/cpp/Info.plist.in -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>              <string>@TARGET_NAME@</string>
+  <key>CFBundleDisplayName</key>       <string>@TARGET_NAME@</string>
+  <key>CFBundleIdentifier</key>        <string>com.example.@TARGET_NAME@</string>
+  <key>CFBundleVersion</key>           <string>1.0</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>LSMinimumSystemVersion</key>    <string>12.0</string>
+  <key>NSHighResolutionCapable</key>   <true/>
+  <key>NSPrincipalClass</key>          <string>NSApplication</string>
+  <!-- Make sure we are a foreground app -->
+  <key>LSUIElement</key>               <false/>
+</dict>
+</plist>
