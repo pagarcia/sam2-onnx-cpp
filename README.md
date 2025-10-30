@@ -49,24 +49,24 @@ pip install `
 
 Export the ONNX files by running:
 ```bash
-python export/onnx_export.py --model_size tiny
+python export/onnx_export.py --model_size base_plus
 ```
-This produces four `.onnx` files in `checkpoints/tiny/`:
+This produces four `.onnx` files in `checkpoints/base_plus/`:
 - `image_encoder.onnx`
 - `image_decoder.onnx`
 - `memory_attention.onnx`
 - `memory_encoder.onnx`
 
-Other than `tiny`, you can choose `small`, `base_plus` and `large`.
+Other than `base_plus`, you can choose `tiny`, `small` and `large`.
 
 ### 5. Run Python Tests
 
 Test the exported ONNX models by running:
 ```bash
-python export/onnx_test_image.py --prompt seed_points --model_size tiny
-python export/onnx_test_image.py --prompt bounding_box --model_size tiny
-python export/onnx_test_video.py --prompt seed_points --model_size tiny
-python export/onnx_test_video.py --prompt bounding_box --model_size tiny
+python export/onnx_test_image.py --prompt seed_points --model_size base_plus
+python export/onnx_test_image.py --prompt bounding_box --model_size base_plus
+python export/onnx_test_video.py --prompt seed_points --model_size base_plus
+python export/onnx_test_video.py --prompt bounding_box --model_size base_plus
 ```
 *Note:*  
 - The image test requires a `.jpg`/`.png` image.  
@@ -174,24 +174,24 @@ pip install torch onnx onnxruntime onnxscript hydra-core iopath opencv-python py
 
 Export the ONNX files by running:
 ```bash
-python export/onnx_export.py --model_size tiny
+python export/onnx_export.py --model_size base_plus
 ```
-This produces four `.onnx` files in `checkpoints/tiny/`:
+This produces four `.onnx` files in `checkpoints/base_plus/`:
 - `image_encoder.onnx`
 - `image_decoder.onnx`
 - `memory_attention.onnx`
 - `memory_encoder.onnx`
 
-Other than `tiny`, you can choose `small`, `base_plus` and `large`.
+Other than `base_plus`, you can choose `tiny`, `small` and `large`.
 
 ### 5. Run Python Tests
 
 Test the exported ONNX models by running:
 ```bash
-python export/onnx_test_image.py --prompt seed_points --model_size tiny
-python export/onnx_test_image.py --prompt bounding_box --model_size tiny
-python export/onnx_test_video.py --prompt seed_points --model_size tiny
-python export/onnx_test_video.py --prompt bounding_box --model_size tiny
+python export/onnx_test_image.py --prompt seed_points --model_size base_plus
+python export/onnx_test_image.py --prompt bounding_box --model_size base_plus
+python export/onnx_test_video.py --prompt seed_points --model_size base_plus
+python export/onnx_test_video.py --prompt bounding_box --model_size base_plus
 ```
 *Note:*  
 - The image test requires a `.jpg`/`.png` image.  
