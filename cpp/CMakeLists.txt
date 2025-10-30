@@ -25,7 +25,7 @@ if(NOT DEFINED OpenCV_DIR)
 endif()
 
 if(NOT DEFINED ONNXRUNTIME_DIR)
-  message(FATAL_ERROR "Please set ONNXRUNTIME_DIR (e.g., -DONNXRUNTIME_DIR=\"/opt/onnxruntime-osx-arm64-1.22.0\")")
+  message(FATAL_ERROR "Please set ONNXRUNTIME_DIR (e.g., -DONNXRUNTIME_DIR=\"/opt/onnxruntime-osx-arm64-1.23.2\")")
 endif()
 
 # ---- 1) OpenCV ----

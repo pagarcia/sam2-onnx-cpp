@@ -241,8 +241,8 @@ Short video samples are available at [filesamples.com](https://filesamples.com/f
 ### 6. Compile & Run the C++ Wrapper
 
 #### 6.1 Download onnxruntime  
-Download and unzip [onnxruntime-osx-arm64-1.22.0.tgz](https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-arm64-1.22.0.tgz) 
-(see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0)) into the `/opt/` directory.
+Download and unzip [onnxruntime-osx-arm64-1.23.2.tgz](https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-osx-arm64-1.23.2.tgz) 
+(see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.23.2)) into the `/opt/` directory.
 
 #### 6.2 Install OpenCV
 
@@ -267,7 +267,7 @@ Inside the `cpp` folder, create both a `build_release` folder and a `package` fo
 
 In the `cpp` folder, run:
 ```bash
-cmake -S . -B build_release -DCMAKE_BUILD_TYPE=Release -DOpenCV_DIR="/opt/homebrew/opt/opencv" -DONNXRUNTIME_DIR="/opt/onnxruntime-osx-arm64-1.22.0"
+cmake -S . -B build_release -DCMAKE_BUILD_TYPE=Release -DOpenCV_DIR="/opt/homebrew/opt/opencv" -DONNXRUNTIME_DIR="/opt/onnxruntime-osx-arm64-1.23.2"
 ```
 Then build the project:
 ```bash
