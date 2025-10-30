@@ -119,6 +119,7 @@ It should match your version of CUDA.
 
 Inside the `cpp` folder, create a `build_release` folder, go inside and run:
 ```bash
+cd build_release
 cmake -G "Visual Studio 17 2022" -DCMAKE_CONFIGURATION_TYPES=Release -DOpenCV_DIR="C:/Program Files/OpenCV/Release" -DONNXRUNTIME_DIR="C:/Program Files/onnxruntime-win-x64-gpu-1.22.1" ..
 cmake --build . --config Release
 ```
@@ -164,6 +165,7 @@ From `C:/Program Files/OpenCV/Release/x64/vc17/bin`:
 
 The compiled executable typically goes to `cpp/build_release/bin/Release`. For example, run:
 ```bash
+cd bin/Release
 ./Segment.exe --onnx_test_image --prompt seed_points
 ./Segment.exe --onnx_test_image --prompt bounding_box
 ./Segment.exe --onnx_test_video --prompt seed_points
