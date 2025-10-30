@@ -190,7 +190,7 @@ Then activate the virtual environment:
 source sam2_env/bin/activate
 ```
 
-### 3. Install Dependencies
+### 3. Install Dependencies (CPU-only for Mac)
 
 With the virtual environment activated, install the required packages:
 ```bash
