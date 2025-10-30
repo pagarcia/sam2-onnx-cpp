@@ -197,6 +197,18 @@ With the virtual environment activated, install the required packages:
 pip install torch onnx onnxruntime onnxscript hydra-core iopath opencv-python pyqt5
 ```
 
+> **Why CPU-only on macOS?**  
+> The CoreML Execution Provider can be very strict for this model:  
+> - It has a **16,384 per-axis tensor limit**; our 1024×1024 encoder flattens a 256×256 map → **65,536** tokens, so large chunks can’t be offloaded.  
+> - The decoder/memory path sometimes uses **0-length / dynamic dims** (e.g., empty prompts), which CoreML refuses.  
+> In practice, only small subgraphs run on CoreML and overall performance can be worse than CPU, so we default to **CPU** for reliability.
+>
+> *Experimental:* you can try CoreML for the **encoder only** by setting:
+> ```bash
+> export SAM2_ORT_ACCEL=coreml
+> ```
+> (Decoder/memory will still run on CPU.) If you see compile failures or slowdowns, unset the variable to return to CPU.
+
 ### 4. Generate ONNX Files
 
 Export the ONNX files by running:
