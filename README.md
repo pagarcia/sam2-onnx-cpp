@@ -24,21 +24,14 @@ python -m venv sam2_env
 ```
 Then activate the virtual environment:
 ```bash
-sam2_env\Scripts\activate
+./sam2_env/Scripts/Activate
 ```
 
 ### 3. Install Dependencies
 
 With the virtual environment activated, install the required packages:
 ```bash
-pip install torch onnx onnxruntime onnxscript hydra-core pillow tqdm iopath opencv-python pyqt5
-```
-*Note: The `opencv-python` and `pyqt5` installs are needed for the Python test scripts.*
-
-For GPU installatio: instad of onnx, onnxruntime, install:
-
-```bash
-pip install "onnxruntime-gpu==1.22.0"
+pip install torch onnx "onnxruntime-gpu==1.22" hydra-core iopath opencv-python pyqt5
 
 pip install `
   "nvidia-cuda-runtime-cu12==12.5.82" `
@@ -48,7 +41,9 @@ pip install `
   "nvidia-curand-cu12==10.3.10.19" `
   "nvidia-nvjitlink-cu12==12.5.82" `
   "nvidia-cudnn-cu12==9.8.0.87"
+
 ```
+*Note: The `opencv-python` and `pyqt5` installs are needed for the Python test scripts.*
 
 ### 4. Generate ONNX Files
 
@@ -81,7 +76,8 @@ You can find short video samples at [filesamples.com](https://filesamples.com/fo
 ### 6. Compile & Run the C++ Wrapper
 
 #### 6.1 Download onnxruntime  
-Download and unzip the file from [onnxruntime-win-x64-gpu-1.22.0.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-gpu-1.22.0.zip) (see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0)).  
+Download and unzip the file from [onnxruntime-win-x64-gpu-1.22.0.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-gpu-1.22.0.zip) 
+(see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0)).  
 Extract to a location like `C:\Program Files\onnxruntime-win-x64-gpu-1.22.0`.
 
 #### 6.2 OpenCV  
@@ -171,7 +167,7 @@ source sam2_env/bin/activate
 
 With the virtual environment activated, install the required packages:
 ```bash
-pip install torch onnx onnxruntime onnxscript hydra-core pillow tqdm iopath opencv-python pyqt5
+pip install torch onnx onnxruntime onnxscript hydra-core iopath opencv-python pyqt5
 ```
 
 ### 4. Generate ONNX Files
@@ -205,7 +201,8 @@ Short video samples are available at [filesamples.com](https://filesamples.com/f
 ### 6. Compile & Run the C++ Wrapper
 
 #### 6.1 Download onnxruntime  
-Download and unzip [onnxruntime-win-arm64-1.21.0.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-win-arm64-1.21.0.zip) (see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.21.0)) into the `/opt/` directory.
+Download and unzip [onnxruntime-win-arm64-1.22.0.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-arm64-1.22.0.zip) 
+(see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0)) into the `/opt/` directory.
 
 #### 6.2 Install OpenCV
 
