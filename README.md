@@ -40,7 +40,7 @@ pip install `
   "nvidia-cufft-cu12==11.4.1.4" `
   "nvidia-curand-cu12==10.3.10.19" `
   "nvidia-nvjitlink-cu12==12.5.82" `
-  "nvidia-cudnn-cu12==9.8.0.87"
+  "nvidia-cudnn-cu12==9.10.2.21"
 
 ```
 *Note: The `opencv-python` and `pyqt5` installs are needed for the Python test scripts.*
@@ -84,7 +84,7 @@ Extract to a location like `C:\Program Files\onnxruntime-win-x64-gpu-1.22.0`.
 Install OpenCV (or point to an existing installation), e.g. located at `C:\Program Files\OpenCV\Release`.
 
 #### 6.3 cuDNN  
-Download and install cuDNN from https://developer.nvidia.com/cudnn-downloads?target_os=Windows&target_arch=x86_64&target_version=10&target_type=exe_local.
+Download and install cuDNN from https://developer.nvidia.com/cudnn-9-10-2-download-archive?target_os=Windows&target_arch=x86_64&target_version=10&target_type=exe_local.
 It should match your version of CUDA.
 
 #### 6.4 CMake Configuration and Build
@@ -109,7 +109,7 @@ From `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.5\bin`:
 - `cudart64_12.dll`
 - `cufft64_11.dll`
 
-From `C:\Program Files\NVIDIA\CUDNN\v9.8\bin\12.8`:
+From `C:\Program Files\NVIDIA\CUDNN\v9.10\bin\12.9`:
 - `cudnn_adv64_9.dll`
 - `cudnn_cnn64_9.dll`
 - `cudnn_engines_precompiled64_9.dll`
@@ -266,6 +266,7 @@ sam2-onnx-cpp/
 ├── export/
 │   ├── onnx_export.py      # Main ONNX export script
 │   ├── onnx_test_image.py  # Python test script for an image with seed points or bounding box
+│   ├── onnx_test_utils.py  # Python shared utils between test image and test video scripts
 │   ├── onnx_test_video.py  # Python test script for a video with seed points or bounding box
 │   └── src/                # Contains modules and utilities for ONNX export
 ├── cpp/
