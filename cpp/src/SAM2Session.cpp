@@ -112,12 +112,14 @@ void SAM2::setupSessionOptions(Ort::SessionOptions &options,
     }
     else if (device.rfind("cuda:", 0) == 0) {
         std::cout << "[DEBUG] Using CUDA execution provider." << std::endl;
-
         int gpuId = std::stoi(device.substr(5));
-        OrtCUDAProviderOptions cudaOpts{};   // zero-initialise every field
+        OrtCUDAProviderOptions cudaOpts{};  // minimal
         cudaOpts.device_id = gpuId;
+        options.AppendExecutionProvider_CUDA(cudaOpts);
 
-        options.AppendExecutionProvider_CUDA(cudaOpts);   // throws on failure
+        // CPU fallback helps constant folding / shape ops:
+        int use_arena = 1;
+        OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena);
     }
     else if (device.rfind("coreml", 0) == 0) {
 #ifdef __APPLE__
@@ -171,7 +173,8 @@ bool SAM2::initialize(const std::string &encoderPath,
 
     // Configure session options
     setupSessionOptions(m_encoderOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
-    setupSessionOptions(m_decoderOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
+    setupSessionOptions(m_decoderOptions, threadsNumber, GraphOptimizationLevel::ORT_DISABLE_ALL, device);
+    m_decoderOptions.AddConfigEntry("session.disable_gemm_fast_gelu_fusion", "1");
 
     try {
 #ifdef _WIN32
@@ -232,8 +235,9 @@ bool SAM2::initializeVideo(const std::string &encoderPath,
         return false;
     }
 
-    setupSessionOptions(m_memAttentionOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
-    setupSessionOptions(m_memEncoderOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
+    setupSessionOptions(m_memAttentionOptions, threadsNumber, GraphOptimizationLevel::ORT_DISABLE_ALL, device);
+    setupSessionOptions(m_memEncoderOptions, threadsNumber, GraphOptimizationLevel::ORT_DISABLE_ALL, device);
+    m_memEncoderOptions.AddConfigEntry("session.disable_gemm_fast_gelu_fusion", "1");
 
     try {
 #ifdef _WIN32
