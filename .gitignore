@@ -51,6 +51,7 @@ __pycache__/
 
 # ONNX Models
 *.onnx
+*.onnx.data
 
 # Build Directories
 /build_release/

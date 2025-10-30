@@ -184,7 +184,7 @@ chmod +x fetch_sparse.sh
 
 In the repository root, run:
 ```bash
-python3 -m venv sam2_env
+python -m venv sam2_env
 ```
 Then activate the virtual environment:
 ```bash
@@ -241,8 +241,8 @@ Short video samples are available at [filesamples.com](https://filesamples.com/f
 ### 6. Compile & Run the C++ Wrapper
 
 #### 6.1 Download onnxruntime  
-Download and unzip [onnxruntime-win-arm64-1.22.1.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.22.1/onnxruntime-win-arm64-1.22.1.zip) 
-(see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.1)) into the `/opt/` directory.
+Download and unzip [onnxruntime-osx-arm64-1.22.0.tgz](https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-arm64-1.22.0.tgz) 
+(see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0)) into the `/opt/` directory.
 
 #### 6.2 Install OpenCV
 
@@ -267,7 +267,7 @@ Inside the `cpp` folder, create both a `build_release` folder and a `package` fo
 
 In the `cpp` folder, run:
 ```bash
-cmake -S . -B build_release -DCMAKE_BUILD_TYPE=Release -DOpenCV_DIR="/opt/homebrew/opt/opencv" -DONNXRUNTIME_DIR="/opt/onnxruntime-osx-arm64-1.21.0"
+cmake -S . -B build_release -DCMAKE_BUILD_TYPE=Release -DOpenCV_DIR="/opt/homebrew/opt/opencv" -DONNXRUNTIME_DIR="/opt/onnxruntime-osx-arm64-1.22.0"
 ```
 Then build the project:
 ```bash
