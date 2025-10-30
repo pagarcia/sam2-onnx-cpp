@@ -34,17 +34,18 @@ With the virtual environment activated, install the required packages:
 #### 3.1 CPU-only (works on any PC)
 
 ```bash
-pip install torch onnx onnxruntime hydra-core iopath opencv-python pyqt5
+pip install torch onnx onnxruntime onnxscript hydra-core iopath pillow opencv-python pyqt5
 ```
 
 *Note: The `opencv-python` and `pyqt5` installs are needed for the Python test scripts.*
 
 #### 3.2 NVIDIA GPU – Stable (works on Pascal/Turing/Ampere/Ada)
 
-Pinned to a proven set for ONNX Runtime 1.22 + CUDA 12.5 + cuDNN 9.10 (last family that supports Pascal/Volta).
+Pinned to a proven set for ONNX Runtime 1.22 + CUDA 12.5 + cuDNN 9.10 (last family that supports Pascal/Volta 
+according to the [docs](https://docs.nvidia.com/deeplearning/cudnn/backend/latest/release-notes.html)).
 
 ```bash
-pip install torch onnx "onnxruntime-gpu==1.22" hydra-core iopath opencv-python pyqt5
+pip install torch onnx "onnxruntime-gpu==1.22" onnxscript hydra-core iopath pillow opencv-python pyqt5
 pip install `
   "nvidia-cuda-runtime-cu12==12.5.82" `
   "nvidia-cuda-nvrtc-cu12==12.5.82" `
@@ -69,7 +70,7 @@ pip install `
   "nvidia-curand-cu12~=10.3" `
   "nvidia-nvjitlink-cu12~=12.9" `
   "nvidia-cudnn-cu12~=9.14"
-pip install torch onnx hydra-core iopath opencv-python pyqt5
+pip install torch onnx onnxscript hydra-core iopath pillow opencv-python pyqt5
 ```
 
 ### 4. Generate ONNX Files
@@ -194,7 +195,7 @@ source sam2_env/bin/activate
 
 With the virtual environment activated, install the required packages:
 ```bash
-pip install torch onnx onnxruntime onnxscript hydra-core iopath opencv-python pyqt5
+pip install torch onnx onnxruntime onnxscript hydra-core iopath pillow opencv-python pyqt5
 ```
 
 > **Why CPU-only on macOS?**  
