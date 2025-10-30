@@ -7,7 +7,7 @@
 #include <cstring> // for memcpy
 
 #ifdef _WIN32
-#include <windows.h>
+  #include <windows.h>
 /** Utility to convert std::string to wide string on Windows. */
 static std::wstring strToWstr(const std::string &str)
 {
@@ -91,9 +91,20 @@ SAM2Size SAM2::getInputSize()
         return SAM2Size(
             static_cast<int>(m_inputShapeEncoder[3]),
             static_cast<int>(m_inputShapeEncoder[2])
-            );
+        );
     }
     return SAM2Size(0, 0);
+}
+
+/* Small helper to check ORT "C" API calls in this TU */
+static inline void _ortThrowIf(OrtStatus* st, const char* what) {
+    if (st) {
+        const char* msg = Ort::GetApi().GetErrorMessage(st);
+        std::ostringstream oss;
+        oss << what << " : " << (msg ? msg : "(null)");
+        Ort::GetApi().ReleaseStatus(st);
+        throw std::runtime_error(oss.str());
+    }
 }
 
 void SAM2::setupSessionOptions(Ort::SessionOptions &options,
@@ -101,62 +112,57 @@ void SAM2::setupSessionOptions(Ort::SessionOptions &options,
                                GraphOptimizationLevel optLevel,
                                const std::string &device)
 {
-    options.SetIntraOpNumThreads(threadsNumber);
+    // Conservative defaults help stability on macOS CPU
+    options.SetIntraOpNumThreads(std::max(1, threadsNumber));
+    options.SetInterOpNumThreads(1);
+    options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
     options.SetGraphOptimizationLevel(optLevel);
+
+#if defined(__APPLE__)
+    options.DisableMemPattern();
+    // If you ever hit hardened-runtime allocator warnings, you can also:
+    // options.DisableCpuMemArena();
+#endif
 
     if (device == "cpu") {
         std::cout << "[DEBUG] Using CPU execution provider." << std::endl;
         int use_arena = 1;
-        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena);
-        if (status != nullptr) {
-            const char* error_message = Ort::GetApi().GetErrorMessage(status);
-            Ort::GetApi().ReleaseStatus(status);
-            throw std::runtime_error(std::string("Error appending CPU execution provider: ") + error_message);
-        }
+        _ortThrowIf(OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena),
+                    "Append CPU EP failed");
     }
     else if (device.rfind("cuda:", 0) == 0) {
         std::cout << "[DEBUG] Using CUDA execution provider." << std::endl;
-        int gpuId = std::stoi(device.substr(5));
+        int gpuId = 0;
+        try { gpuId = std::stoi(device.substr(5)); } catch (...) { gpuId = 0; }
+
+#if !defined(__APPLE__)
         OrtCUDAProviderOptions cudaOpts{};  // minimal
         cudaOpts.device_id = gpuId;
         options.AppendExecutionProvider_CUDA(cudaOpts);
-
-        // CPU fallback helps constant folding / shape ops:
+#endif
+        // CPU fallback (shape ops / constant folding)
         int use_arena = 1;
-        OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena);
+        _ortThrowIf(OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena),
+                    "Append CPU EP (fallback) failed");
     }
     else if (device.rfind("coreml", 0) == 0) {
 #ifdef __APPLE__
         std::cout << "[DEBUG] Using CoreML execution provider." << std::endl;
-        // For CoreML, you need to provide a uint32_t flag.
-        // Here we use the default flag (COREML_FLAG_USE_NONE). You can modify coreml_flags as needed.
-        uint32_t coreml_flags = COREML_FLAG_USE_NONE;
-        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CoreML(options, coreml_flags);
-        if (status != nullptr) {
-            const char* error_message = Ort::GetApi().GetErrorMessage(status);
-            Ort::GetApi().ReleaseStatus(status);
-            throw std::runtime_error(std::string("Error appending CoreML execution provider: ") + error_message);
-        }
+        uint32_t coreml_flags = 0; // COREML_FLAG_USE_NONE
+        _ortThrowIf(OrtSessionOptionsAppendExecutionProvider_CoreML(options, coreml_flags),
+                    "Append CoreML EP failed");
 #else
-        std::cout << "[WARN] CoreML requested but not supported on this platform. Defaulting to CPU." << std::endl;
+        std::cout << "[WARN] CoreML requested but not supported on this platform. Defaulting to CPU.\n";
         int use_arena = 1;
-        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena);
-        if (status != nullptr) {
-            const char* error_message = Ort::GetApi().GetErrorMessage(status);
-            Ort::GetApi().ReleaseStatus(status);
-            throw std::runtime_error(std::string("Error appending CPU execution provider: ") + error_message);
-        }
+        _ortThrowIf(OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena),
+                    "Append CPU EP (fallback) failed");
 #endif
     }
     else {
-        std::cout << "[DEBUG] Unknown device type. Defaulting to CPU execution provider." << std::endl;
+        std::cout << "[DEBUG] Unknown device type. Defaulting to CPU execution provider.\n";
         int use_arena = 1;
-        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena);
-        if (status != nullptr) {
-            const char* error_message = Ort::GetApi().GetErrorMessage(status);
-            Ort::GetApi().ReleaseStatus(status);
-            throw std::runtime_error(std::string("Error appending default CPU execution provider: ") + error_message);
-        }
+        _ortThrowIf(OrtSessionOptionsAppendExecutionProvider_CPU(options, use_arena),
+                    "Append default CPU EP failed");
     }
 }
 
@@ -175,10 +181,25 @@ bool SAM2::initialize(const std::string &encoderPath,
         return false;
     }
 
-    // Configure session options
-    setupSessionOptions(m_encoderOptions, threadsNumber, GraphOptimizationLevel::ORT_ENABLE_ALL, device);
-    setupSessionOptions(m_decoderOptions, threadsNumber, GraphOptimizationLevel::ORT_DISABLE_ALL, device);
+    // Base options: encoder vs decoder
+    setupSessionOptions(m_encoderOptions, threadsNumber,
+                        GraphOptimizationLevel::ORT_ENABLE_EXTENDED, device);
+    setupSessionOptions(m_decoderOptions, threadsNumber,
+                        GraphOptimizationLevel::ORT_DISABLE_ALL, device);
     m_decoderOptions.AddConfigEntry("session.disable_gemm_fast_gelu_fusion", "1");
+
+    // ---- macOS CPU "safe" mode for the encoder ----
+#if defined(__APPLE__)
+    {
+        const bool cpu_only = (device.rfind("cuda:",0) != 0) && (device.rfind("coreml",0) != 0);
+        if (cpu_only) {
+            m_encoderOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_DISABLE_ALL);
+            m_encoderOptions.AddConfigEntry("session.disable_gemm_fast_gelu_fusion", "1");
+            m_encoderOptions.AddConfigEntry("session.disable_prepacking", "1");
+            m_encoderOptions.DisableMemPattern();
+        }
+    }
+#endif
 
     try {
 #ifdef _WIN32
@@ -192,8 +213,23 @@ bool SAM2::initialize(const std::string &encoderPath,
         m_imgDecoderSession = std::make_unique<Ort::Session>(m_decoderEnv, decoderPath.c_str(), m_decoderOptions);
 #endif
 
-        // Query shapes for the encoder's 3 main outputs
-        {
+        // ---------- Shape handling ----------
+        const bool mac_cpu =
+        #ifdef __APPLE__
+            (device.rfind("cuda:",0) != 0) && (device.rfind("coreml",0) != 0);
+        #else
+            false;
+        #endif
+
+        if (mac_cpu) {
+            // Avoid ORT shape introspection (crash path) on macOS CPU.
+            m_inputShapeEncoder      = {1, 3,   1024, 1024};
+            m_outputShapeEncoder     = {1, 256,   64,   64};
+            m_highResFeatures1Shape  = {1, 32,   256,  256};
+            m_highResFeatures2Shape  = {1, 64,   128,  128};
+            std::cout << "[INFO] macOS CPU: using fixed SAM2 shapes.\n";
+        } else {
+            // Normal, safe shape queries
             auto encInputInfo = m_imgEncoderSession->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo();
             m_inputShapeEncoder = encInputInfo.GetShape();
 
@@ -207,7 +243,7 @@ bool SAM2::initialize(const std::string &encoderPath,
             m_highResFeatures2Shape = out2Info.GetShape();
         }
 
-        // Gather node info
+        // Gather node info (names etc.)
         m_imgEncoderInputNodes  = getSessionNodes(m_imgEncoderSession.get(), true);
         m_imgEncoderOutputNodes = getSessionNodes(m_imgEncoderSession.get(), false);
         m_imgDecoderInputNodes  = getSessionNodes(m_imgDecoderSession.get(), true);
@@ -240,8 +276,22 @@ bool SAM2::initializeVideo(const std::string &encoderPath,
     }
 
     setupSessionOptions(m_memAttentionOptions, threadsNumber, GraphOptimizationLevel::ORT_DISABLE_ALL, device);
-    setupSessionOptions(m_memEncoderOptions, threadsNumber, GraphOptimizationLevel::ORT_DISABLE_ALL, device);
+    setupSessionOptions(m_memEncoderOptions,    threadsNumber, GraphOptimizationLevel::ORT_DISABLE_ALL, device);
     m_memEncoderOptions.AddConfigEntry("session.disable_gemm_fast_gelu_fusion", "1");
+
+#if defined(__APPLE__)
+    {
+        const bool cpu_only = (device.rfind("cuda:",0) != 0) && (device.rfind("coreml",0) != 0);
+        if (cpu_only) {
+            m_memAttentionOptions.AddConfigEntry("session.disable_gemm_fast_gelu_fusion", "1");
+            m_memAttentionOptions.AddConfigEntry("session.disable_prepacking", "1");
+            m_memAttentionOptions.DisableMemPattern();
+
+            m_memEncoderOptions.AddConfigEntry("session.disable_prepacking", "1");
+            m_memEncoderOptions.DisableMemPattern();
+        }
+    }
+#endif
 
     try {
 #ifdef _WIN32
@@ -249,17 +299,16 @@ bool SAM2::initializeVideo(const std::string &encoderPath,
         std::wstring wEnc2 = strToWstr(memEncoderPath);
 
         m_memAttentionSession = std::make_unique<Ort::Session>(m_memAttentionEnv, wAttn.c_str(), m_memAttentionOptions);
-        m_memEncoderSession  = std::make_unique<Ort::Session>(m_memEncoderEnv, wEnc2.c_str(), m_memEncoderOptions);
+        m_memEncoderSession   = std::make_unique<Ort::Session>(m_memEncoderEnv,  wEnc2.c_str(), m_memEncoderOptions);
 #else
         m_memAttentionSession = std::make_unique<Ort::Session>(m_memAttentionEnv, memAttentionPath.c_str(), m_memAttentionOptions);
-        m_memEncoderSession  = std::make_unique<Ort::Session>(m_memEncoderEnv, memEncoderPath.c_str(), m_memEncoderOptions);
+        m_memEncoderSession   = std::make_unique<Ort::Session>(m_memEncoderEnv,  memEncoderPath.c_str(),  m_memEncoderOptions);
 #endif
 
-        // Gather node info for memory sessions
         m_memAttentionInputNodes  = getSessionNodes(m_memAttentionSession.get(), true);
         m_memAttentionOutputNodes = getSessionNodes(m_memAttentionSession.get(), false);
-        m_memEncoderInputNodes    = getSessionNodes(m_memEncoderSession.get(), true);
-        m_memEncoderOutputNodes   = getSessionNodes(m_memEncoderSession.get(), false);
+        m_memEncoderInputNodes    = getSessionNodes(m_memEncoderSession.get(),    true);
+        m_memEncoderOutputNodes   = getSessionNodes(m_memEncoderSession.get(),    false);
 
         std::cout<<"[DEBUG] SAM2::initializeVideo() => memAttn+memEnc loaded.\n";
     }
@@ -302,7 +351,7 @@ SAM2::runSession(Ort::Session* session,
             inputTensors.size(),
             outNames.data(),
             outNames.size()
-            );
+        );
         return outputs; // success => vector<Ort::Value>
     }
     catch(const std::exception &e){
