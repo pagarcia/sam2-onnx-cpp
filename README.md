@@ -104,9 +104,9 @@ You can find short video samples at [filesamples.com](https://filesamples.com/fo
 ### 6. Compile & Run the C++ Wrapper
 
 #### 6.1 Download onnxruntime  
-Download and unzip the file from [onnxruntime-win-x64-gpu-1.22.0.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-gpu-1.22.0.zip) 
-(see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0)).  
-Extract to a location like `C:\Program Files\onnxruntime-win-x64-gpu-1.22.0`.
+Download and unzip the file from [onnxruntime-win-x64-gpu-1.22.1.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.22.1/onnxruntime-win-x64-gpu-1.22.1.zip) 
+(see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.1)).  
+Extract to location `C:\Program Files\onnxruntime-win-x64-gpu-1.22.1`.
 
 #### 6.2 OpenCV  
 Install OpenCV (or point to an existing installation), e.g. located at `C:\Program Files\OpenCV\Release`.
@@ -117,9 +117,9 @@ It should match your version of CUDA.
 
 #### 6.4 CMake Configuration and Build
 
-Inside the `cpp` folder, create a `build_release` folder and run:
+Inside the `cpp` folder, create a `build_release` folder, go inside and run:
 ```bash
-cmake -G "Visual Studio 17 2022" -DCMAKE_CONFIGURATION_TYPES=Release -DOpenCV_DIR="C:/Program Files/OpenCV/Release" -DONNXRUNTIME_DIR="C:/Program Files/onnxruntime-win-x64-gpu-1.22.0" ..
+cmake -G "Visual Studio 17 2022" -DCMAKE_CONFIGURATION_TYPES=Release -DOpenCV_DIR="C:/Program Files/OpenCV/Release" -DONNXRUNTIME_DIR="C:/Program Files/onnxruntime-win-x64-gpu-1.22.1" ..
 cmake --build . --config Release
 ```
 
@@ -147,13 +147,13 @@ From `C:\Program Files\NVIDIA\CUDNN\v9.10\bin\12.9`:
 - `cudnn_ops64_9.dll`
 - `cudnn64_9.dll`
 
-From `C:/Program Files/onnxruntime-win-x64-gpu-1.22.0`:
+From `C:/Program Files/onnxruntime-win-x64-gpu-1.22.1/lib`:
 - `onnxruntime.dll`
 - `onnxruntime_providers_cuda.dll`
 - `onnxruntime_providers_shared.dll`
 - `onnxruntime_providers_tensorrt.dll`
 
-From `C:/Program Files/OpenCV/Release`:
+From `C:/Program Files/OpenCV/Release/x64/vc17/bin`:
 - `opencv_core4110.dll`
 - `opencv_highgui4110.dll`
 - `opencv_imgcodecs4110.dll`
@@ -241,8 +241,8 @@ Short video samples are available at [filesamples.com](https://filesamples.com/f
 ### 6. Compile & Run the C++ Wrapper
 
 #### 6.1 Download onnxruntime  
-Download and unzip [onnxruntime-win-arm64-1.22.0.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-arm64-1.22.0.zip) 
-(see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0)) into the `/opt/` directory.
+Download and unzip [onnxruntime-win-arm64-1.22.1.zip](https://github.com/microsoft/onnxruntime/releases/download/v1.22.1/onnxruntime-win-arm64-1.22.1.zip) 
+(see [releases page](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.1)) into the `/opt/` directory.
 
 #### 6.2 Install OpenCV
 
