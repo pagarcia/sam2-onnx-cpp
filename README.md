@@ -91,10 +91,10 @@ Other than `base_plus`, you can choose `tiny`, `small` and `large`.
 
 Test the exported ONNX models by running:
 ```bash
-python export/onnx_test_image.py --prompt seed_points --model_size base_plus
-python export/onnx_test_image.py --prompt bounding_box --model_size base_plus
-python export/onnx_test_video.py --prompt seed_points --model_size base_plus
-python export/onnx_test_video.py --prompt bounding_box --model_size base_plus
+python python/onnx_test_image.py --prompt seed_points --model_size base_plus
+python python/onnx_test_image.py --prompt bounding_box --model_size base_plus
+python python/onnx_test_video.py --prompt seed_points --model_size base_plus
+python python/onnx_test_video.py --prompt bounding_box --model_size base_plus
 ```
 *Note:*  
 - The image test requires a `.jpg`/`.png` image.  
@@ -230,10 +230,10 @@ Other than `base_plus`, you can choose `tiny`, `small` and `large`.
 
 Test the exported ONNX models by running:
 ```bash
-python export/onnx_test_image.py --prompt seed_points --model_size base_plus
-python export/onnx_test_image.py --prompt bounding_box --model_size base_plus
-python export/onnx_test_video.py --prompt seed_points --model_size base_plus
-python export/onnx_test_video.py --prompt bounding_box --model_size base_plus
+python python/onnx_test_image.py --prompt seed_points --model_size base_plus
+python python/onnx_test_image.py --prompt bounding_box --model_size base_plus
+python python/onnx_test_video.py --prompt seed_points --model_size base_plus
+python python/onnx_test_video.py --prompt bounding_box --model_size base_plus
 ```
 *Note:*  
 - The image test requires a `.jpg`/`.png` image.  
@@ -306,11 +306,13 @@ cd $HOME/Documents/sam2-onnx-cpp/cpp
 ```
 sam2-onnx-cpp/
 ├── export/
-│   ├── onnx_export.py      # Main ONNX export script
-│   ├── onnx_test_image.py  # Python test script for an image with seed points or bounding box
-│   ├── onnx_test_utils.py  # Python shared utils between test image and test video scripts
-│   ├── onnx_test_video.py  # Python test script for a video with seed points or bounding box
-│   └── src/                # Contains modules and utilities for ONNX export
+│   ├── onnx_export.py
+│   └── src/              # export-only helpers (unchanged)
+├── python/
+│   ├── __init__.py       # optional, for -m runs
+│   ├── onnx_test_image.py
+│   ├── onnx_test_utils.py
+│   └── onnx_test_video.py
 ├── cpp/
 │   ├── CMakeLists.txt 
 │   ├── build_release/      # Folder containing compiled binaries

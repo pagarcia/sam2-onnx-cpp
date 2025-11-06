@@ -1,4 +1,4 @@
-# sam2-onnx-cpp/export/onnx_test_utils.py
+# sam2-onnx-cpp/python/onnx_test_utils.py
 """
 Shared utilities for onnx_test_image.py and onnx_test_video.py.
 
@@ -19,6 +19,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Tuple
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -203,7 +204,7 @@ def make_safe_session(path: str,
 # Paths / small helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def prefer_quantized_encoder(ckpt_dir: str,
+def prefer_quantized_encoder(ckpt_dir: str | os.PathLike,
                              base_name: str = "image_encoder") -> Optional[str]:
     """
     Pick the best encoder artifact for the current acceleration mode.
@@ -225,11 +226,12 @@ def prefer_quantized_encoder(ckpt_dir: str,
         order = [f"{base_name}.onnx", f"{base_name}.int8.onnx"]
     else:
         order = [f"{base_name}.int8.onnx", f"{base_name}.onnx"]
-
+        
+    ckpt_path = Path(ckpt_dir)
     for fname in order:
-        p = os.path.join(ckpt_dir, fname)
-        if os.path.exists(p):
-            return p
+        p = ckpt_path / fname
+        if p.exists():
+            return str(p.resolve())
     return None
 
 

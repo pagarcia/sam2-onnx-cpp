@@ -1,4 +1,4 @@
-# sam2-onnx-cpp/export/onnx_test_video.py
+# sam2-onnx-cpp/python/onnx_test_video.py
 #!/usr/bin/env python3
 # CPU-optimized: encoder fast (BASIC/EXTENDED), decoder/memory safe.
 import os
@@ -8,6 +8,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
+from pathlib import Path
 import sys
 import time
 import argparse
@@ -128,12 +129,13 @@ def interactive_select_box(first_bgr, sess_enc, sess_dec, enc_shape):
 
 
 def process_video(args):
-    ckpt_dir = os.path.join("checkpoints", args.model_size)
-    enc_path = prefer_quantized_encoder(ckpt_dir)
+    REPO_ROOT = Path(__file__).resolve().parent.parent
+    ckpt_dir = REPO_ROOT / "checkpoints" / args.model_size
+    enc_path = prefer_quantized_encoder(str(ckpt_dir))
     if enc_path is None:
         sys.exit(f"ERROR: Encoder ONNX not found in {ckpt_dir}")
 
-    paths = lambda name: os.path.join(ckpt_dir, f"{name}.onnx")
+    paths = lambda name: str((ckpt_dir / f"{name}.onnx").resolve())
     dec_path = paths("image_decoder")
     men_path = paths("memory_encoder")
     mat_path = paths("memory_attention")

@@ -1,4 +1,4 @@
-# sam2-onnx-cpp/export/onnx_test_image.py
+# sam2-onnx-cpp/python/onnx_test_image.py
 #!/usr/bin/env python3
 # CPU-optimized: encoder fast (EXTENDED + prepacking), decoder safe (no risky fusion).
 import os
@@ -8,6 +8,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
+from pathlib import Path
 import sys
 import time
 import argparse
@@ -41,12 +42,14 @@ def main():
         sys.exit("No image selected – exiting.")
     print(f"[INFO] Selected image : {img_path}")
 
-    ckpt_dir = os.path.join("checkpoints", args.model_size)
-    enc_path = prefer_quantized_encoder(ckpt_dir)
+    # Resolve repo root (one level up from this file)
+    REPO_ROOT = Path(__file__).resolve().parent.parent
+    ckpt_dir = REPO_ROOT / "checkpoints" / args.model_size
+    enc_path = prefer_quantized_encoder(str(ckpt_dir))
     if enc_path is None:
         sys.exit(f"ERROR: Encoder ONNX not found in {ckpt_dir}")
 
-    dec_path = os.path.join(ckpt_dir, "image_decoder.onnx")
+    dec_path = str(ckpt_dir / "image_decoder.onnx")
     if not os.path.exists(dec_path):
         sys.exit(f"ERROR: Decoder ONNX not found in {ckpt_dir}")
 
