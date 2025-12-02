@@ -7,6 +7,7 @@
 #ifdef __APPLE__
 #include <coreml_provider_factory.h>
 #endif
+
 #include <list>
 #include <fstream>
 #include <iostream>

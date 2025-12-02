@@ -113,7 +113,8 @@ void SAM2::setupSessionOptions(Ort::SessionOptions &options,
                                const std::string &device)
 {
     // Conservative defaults help stability on macOS CPU
-    options.SetIntraOpNumThreads(std::max(1, threadsNumber));
+    const int safeThreads = (threadsNumber > 0) ? threadsNumber : 1;
+    options.SetIntraOpNumThreads(safeThreads);
     options.SetInterOpNumThreads(1);
     options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
     options.SetGraphOptimizationLevel(optLevel);
