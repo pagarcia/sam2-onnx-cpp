@@ -332,6 +332,31 @@ def export_memory_attention_no_objptr(model, outdir, name: str | None = None) ->
     _maybe_check(attn_path, "memory_attention without object pointers")
 
 
+def export_memory_attention_no_objptr_1frame(model, outdir, name: str | None = None) -> None:
+    os.makedirs(outdir, exist_ok=True)
+    attn_path = os.path.join(outdir, "memory_attention_no_objptr_1frame.onnx")
+
+    current_vision_feat = torch.randn(1, 256, 64, 64).float()
+    memory_1 = torch.randn(1, 64, 64, 64).float()
+    memory_pos_embed = torch.randn(4096, 1, 64).float()
+
+    torch.onnx.export(
+        model,
+        (current_vision_feat, memory_1, memory_pos_embed),
+        attn_path,
+        export_params=True,
+        opset_version=OPSET,
+        optimize=OPTIMIZE,
+        input_names=[
+            "current_vision_feat",
+            "memory_1",
+            "memory_pos_embed",
+        ],
+        output_names=["fused_feat"],
+    )
+    _maybe_check(attn_path, "memory_attention without object pointers (1-frame static)")
+
+
 def export_memory_encoder(model, outdir, name: str | None = None) -> None:
     """
     Legacy memory encoder export.

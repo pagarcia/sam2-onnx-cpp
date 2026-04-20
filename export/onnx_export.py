@@ -44,6 +44,7 @@ def main(args):
         ImageEncoder,
         MemAttention,
         MemAttentionNoObjPtr,
+        MemAttentionNoObjPtr1Frame,
         MemEncoder,
         MemEncoderLite,
         VideoDecoderInit,
@@ -56,6 +57,7 @@ def main(args):
         export_image_encoder,
         export_memory_attention,
         export_memory_attention_no_objptr,
+        export_memory_attention_no_objptr_1frame,
         export_memory_encoder,
         export_memory_encoder_lite,
         export_video_decoder_init,
@@ -131,6 +133,9 @@ def main(args):
 
         mem_attn_no_objptr = MemAttentionNoObjPtr(sam2_model).eval().cpu()
         export_memory_attention_no_objptr(mem_attn_no_objptr, outdir, name=model_size)
+
+        mem_attn_no_objptr_1frame = MemAttentionNoObjPtr1Frame(sam2_model).eval().cpu()
+        export_memory_attention_no_objptr_1frame(mem_attn_no_objptr_1frame, outdir, name=model_size)
 
         mem_enc_lite = MemEncoderLite(sam2_model).eval().cpu()
         export_memory_encoder_lite(mem_enc_lite, outdir, name=model_size)

@@ -38,6 +38,7 @@ _STATIC_SPECIALIZED_DECODERS = {
     "image_decoder_box.onnx",
     "video_decoder_init.onnx",
     "video_decoder_propagate.onnx",
+    "memory_attention_no_objptr_1frame.onnx",
 }
 
 
@@ -291,21 +292,36 @@ def resolve_video_runtime_paths(
         {
             "decoder_init": "video_decoder_init.onnx",
             "decoder_propagate": "video_decoder_propagate.onnx",
-            "memory_attention": "memory_attention_no_objptr.onnx",
         },
     )
+    specialized_attn_1frame = Path(ckpt_dir) / "memory_attention_no_objptr_1frame.onnx"
+    specialized_attn_dynamic = Path(ckpt_dir) / "memory_attention_no_objptr.onnx"
     specialized_lite_memenc = Path(ckpt_dir) / "memory_encoder_lite.onnx"
     legacy_memenc = Path(ckpt_dir) / "memory_encoder.onnx"
 
     def _specialized_result() -> Dict[str, str]:
         _ensure_paths_exist(specialized_base, "specialized core")
+        if specialized_attn_1frame.exists():
+            memory_attention = specialized_attn_1frame
+            mode_suffix = "1frame-attn"
+        elif specialized_attn_dynamic.exists():
+            memory_attention = specialized_attn_dynamic
+            mode_suffix = "dynamic-attn"
+        else:
+            raise FileNotFoundError(
+                "Missing specialized memory attention artifacts:\n"
+                f"  {specialized_attn_1frame}\n"
+                f"  {specialized_attn_dynamic}"
+            )
         memenc_path = specialized_lite_memenc if specialized_lite_memenc.exists() else legacy_memenc
         if not memenc_path.exists():
             raise FileNotFoundError(f"Missing specialized memory encoder fallback: {memenc_path}")
         mode = "specialized" if specialized_lite_memenc.exists() else "specialized-hybrid"
+        mode = f"{mode}-{mode_suffix}"
         return {
             "mode": mode,
             **{k: str(v.resolve()) for k, v in specialized_base.items()},
+            "memory_attention": str(memory_attention.resolve()),
             "memory_encoder": str(memenc_path.resolve()),
         }
 
@@ -316,7 +332,9 @@ def resolve_video_runtime_paths(
     if artifacts == "specialized":
         return _specialized_result()
 
-    if all(path.exists() for path in specialized_base.values()):
+    if all(path.exists() for path in specialized_base.values()) and (
+        specialized_attn_1frame.exists() or specialized_attn_dynamic.exists()
+    ):
         return _specialized_result()
 
     _ensure_paths_exist(legacy, "legacy")

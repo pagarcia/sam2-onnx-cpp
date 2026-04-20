@@ -249,6 +249,42 @@ class MemAttentionNoObjPtr(_MemAttentionBase):
         return fused_hwbc.permute(1, 2, 0).reshape(batch, channels, height, width)
 
 
+class MemAttentionNoObjPtr1Frame(_MemAttentionBase):
+    def __init__(self, sam_model: SAM2Base) -> None:
+        super().__init__(sam_model)
+        image_size = int(getattr(sam_model, "image_size", 1024))
+        with torch.no_grad():
+            dummy = torch.zeros(1, 3, image_size, image_size, dtype=torch.float32)
+            backbone_out = sam_model.image_encoder(dummy)
+            _, _, current_vision_pos_embeds, _ = sam_model._prepare_backbone_features(backbone_out)
+            current_vision_pos_embed = current_vision_pos_embeds[-1].detach().clone()
+        self.register_buffer("current_vision_pos_embed", current_vision_pos_embed, persistent=False)
+
+    @staticmethod
+    def _flatten_single_memory_frame(memory_1: torch.Tensor) -> torch.Tensor:
+        return memory_1.reshape(1, 64, 64 * 64).permute(0, 2, 1).reshape(4096, 1, 64)
+
+    @torch.no_grad()
+    def forward(
+        self,
+        current_vision_feat: torch.Tensor,
+        memory_1: torch.Tensor,
+        memory_pos_embed: torch.Tensor,
+    ) -> torch.Tensor:
+        feat_hwbc, batch, channels, height, width = self._prepare_current_features(current_vision_feat)
+        memory_1 = self._flatten_single_memory_frame(memory_1)
+
+        fused_hwbc = self.memory_attention(
+            curr=feat_hwbc,
+            curr_pos=self.current_vision_pos_embed,
+            memory=memory_1,
+            memory_pos=memory_pos_embed,
+            num_obj_ptr_tokens=0,
+        )
+
+        return fused_hwbc.permute(1, 2, 0).reshape(batch, channels, height, width)
+
+
 class _MemEncoderBase(nn.Module):
     def __init__(self, sam_model: SAM2Base) -> None:
         super().__init__()
