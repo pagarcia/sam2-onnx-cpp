@@ -32,6 +32,8 @@ except Exception:
 ACCEL = os.getenv("SAM2_ORT_ACCEL", "auto").lower()
 COREML_ALL = os.getenv("SAM2_ORT_COREML_ALL", "0").lower() in ("1", "true", "yes")
 STATIC_DECODER_OPT = os.getenv("SAM2_ORT_STATIC_DECODER_OPT", "1").lower() in ("1", "true", "yes")
+EXPERIMENTAL_1FRAME_ATTN = os.getenv("SAM2_ORT_EXPERIMENTAL_1FRAME_ATTN", "0").lower() in ("1", "true", "yes")
+EXPERIMENTAL_IMAGE_POINT_DECODER = os.getenv("SAM2_ORT_EXPERIMENTAL_IMAGE_POINT_DECODER", "0").lower() in ("1", "true", "yes")
 
 _STATIC_SPECIALIZED_DECODERS = {
     "image_decoder_points.onnx",
@@ -253,6 +255,7 @@ def resolve_image_decoder_path(
     specialized_name = "image_decoder_box.onnx" if prompt == "bounding_box" else "image_decoder_points.onnx"
     legacy_path = Path(ckpt_dir) / "image_decoder.onnx"
     specialized_path = Path(ckpt_dir) / specialized_name
+    allow_specialized_points = prompt != "seed_points" or EXPERIMENTAL_IMAGE_POINT_DECODER
 
     if artifacts == "legacy":
         if not legacy_path.exists():
@@ -260,11 +263,18 @@ def resolve_image_decoder_path(
         return str(legacy_path.resolve()), "legacy"
 
     if artifacts == "specialized":
+        if prompt == "seed_points" and not allow_specialized_points:
+            if not legacy_path.exists():
+                raise FileNotFoundError(
+                    "Specialized image point decoder is currently experimental and disabled by default, "
+                    f"and the legacy decoder is missing: {legacy_path}"
+                )
+            return str(legacy_path.resolve()), "legacy-safe-seed-points"
         if not specialized_path.exists():
             raise FileNotFoundError(f"Missing specialized decoder: {specialized_path}")
         return str(specialized_path.resolve()), "specialized"
 
-    if specialized_path.exists():
+    if specialized_path.exists() and allow_specialized_points:
         return str(specialized_path.resolve()), "specialized"
     if legacy_path.exists():
         return str(legacy_path.resolve()), "legacy"
@@ -301,12 +311,15 @@ def resolve_video_runtime_paths(
 
     def _specialized_result() -> Dict[str, str]:
         _ensure_paths_exist(specialized_base, "specialized core")
-        if specialized_attn_1frame.exists():
+        if EXPERIMENTAL_1FRAME_ATTN and specialized_attn_1frame.exists():
             memory_attention = specialized_attn_1frame
             mode_suffix = "1frame-attn"
         elif specialized_attn_dynamic.exists():
             memory_attention = specialized_attn_dynamic
             mode_suffix = "dynamic-attn"
+        elif specialized_attn_1frame.exists():
+            memory_attention = specialized_attn_1frame
+            mode_suffix = "1frame-attn-fallback"
         else:
             raise FileNotFoundError(
                 "Missing specialized memory attention artifacts:\n"
@@ -625,6 +638,66 @@ def run_memory_encoder(
         temporal_code = values[2]
 
     return maskmem_features, maskmem_pos_enc, temporal_code
+
+
+def warmup_video_runtime_sessions(
+    sess_dec0: InferenceSession,
+    sess_decn: InferenceSession,
+    sess_mat: InferenceSession,
+    sess_men: InferenceSession,
+    first_record: Dict[str, np.ndarray],
+    prompt_inputs: tuple[Optional[np.ndarray], Optional[np.ndarray]],
+    repeats: int = 1,
+    propagate_record: Optional[Dict[str, np.ndarray]] = None,
+) -> None:
+    if repeats <= 0:
+        return
+
+    pts0, lbls0 = prompt_inputs
+    propagate_record = first_record if propagate_record is None else propagate_record
+
+    for _ in range(repeats):
+        enc_embed0 = as_f32c(first_record["embed"])
+        f0_0 = as_f32c(first_record["f0"])
+        f1_0 = as_f32c(first_record["f1"])
+
+        _, mask_for_mem0, _ = run_decoder(sess_dec0, pts0, lbls0, enc_embed0, f0_0, f1_0)
+        if mask_for_mem0 is None:
+            raise RuntimeError("Warmup failed: decoder init did not return mask_for_mem")
+
+        mem_feats, mem_pos, _ = run_memory_encoder(
+            sess_men,
+            mask_for_mem=mask_for_mem0[:, 0:1],
+            pix_feat=enc_embed0,
+        )
+        mem_feats = as_f32c(mem_feats)
+        mem_pos = as_f32c(mem_pos)
+
+        prop_embed = as_f32c(propagate_record["embed"])
+        prop_f0 = as_f32c(propagate_record["f0"])
+        prop_f1 = as_f32c(propagate_record["f1"])
+        prop_vis_pos = propagate_record.get("vis_pos")
+        if prop_vis_pos is not None:
+            prop_vis_pos = as_f32c(prop_vis_pos)
+
+        fused_embed = run_memory_attention(
+            sess_mat,
+            current_vision_feat=prop_embed,
+            current_vision_pos_embed=prop_vis_pos,
+            memory_1=mem_feats,
+            memory_pos_embed=mem_pos,
+        )
+        fused_embed = as_f32c(fused_embed)
+
+        _, mask_for_mem_n, _ = run_decoder(sess_decn, None, None, fused_embed, prop_f0, prop_f1)
+        if mask_for_mem_n is None:
+            raise RuntimeError("Warmup failed: decoder propagate did not return mask_for_mem")
+
+        run_memory_encoder(
+            sess_men,
+            mask_for_mem=mask_for_mem_n[:, 0:1],
+            pix_feat=fused_embed,
+        )
 
 
 def green_overlay(

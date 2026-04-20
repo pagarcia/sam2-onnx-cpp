@@ -32,6 +32,7 @@ from onnx_test_utils import (
     run_memory_attention,
     run_memory_encoder,
     set_cv2_threads,
+    warmup_video_runtime_sessions,
 )
 
 
@@ -90,7 +91,10 @@ def interactive_select_points(first_bgr, sess_enc, sess_dec, enc_shape):
         if cv2.waitKey(20) & 0xFF in (27, 13):
             break
     cv2.destroyAllWindows()
-    return points, labels, embed, f0, f1, (h_org, w_org)
+    vis_pos = enc.get("vision_pos_embed")
+    if vis_pos is not None:
+        vis_pos = vis_pos.astype(np.float32, copy=False)
+    return points, labels, embed, f0, f1, vis_pos, (h_org, w_org)
 
 
 def interactive_select_box(first_bgr, sess_enc, sess_dec, enc_shape):
@@ -160,7 +164,10 @@ def interactive_select_box(first_bgr, sess_enc, sess_dec, enc_shape):
         box = (x1, y1, x2, y2)
     else:
         box = None
-    return box, embed, f0, f1, (h_org, w_org)
+    vis_pos = enc.get("vision_pos_embed")
+    if vis_pos is not None:
+        vis_pos = vis_pos.astype(np.float32, copy=False)
+    return box, embed, f0, f1, vis_pos, (h_org, w_org)
 
 
 def process_video(args):
@@ -215,15 +222,38 @@ def process_video(args):
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     if args.prompt == "bounding_box":
-        box, embed0, f0_0, f1_0, (h_org, w_org) = interactive_select_box(first_bgr, sess_enc, sess_dec0, (enc_h, enc_w))
+        box, embed0, f0_0, f1_0, vis_pos0, (h_org, w_org) = interactive_select_box(first_bgr, sess_enc, sess_dec0, (enc_h, enc_w))
         pts0, lbls0 = prepare_box_prompt(box, (h_org, w_org), (enc_h, enc_w)) if box else (None, None)
     else:
-        pts, lbls, embed0, f0_0, f1_0, (h_org, w_org) = interactive_select_points(first_bgr, sess_enc, sess_dec0, (enc_h, enc_w))
+        pts, lbls, embed0, f0_0, f1_0, vis_pos0, (h_org, w_org) = interactive_select_points(first_bgr, sess_enc, sess_dec0, (enc_h, enc_w))
         pts0, lbls0 = prepare_points(pts, lbls, (h_org, w_org), (enc_h, enc_w))
 
     embed0 = embed0.astype(np.float32, copy=False)
     f0_0 = f0_0.astype(np.float32, copy=False)
     f1_0 = f1_0.astype(np.float32, copy=False)
+
+    if args.session_warmup > 0:
+        print(f"[INFO] Session warmup : {args.session_warmup} pass(es)")
+        warmup_video_runtime_sessions(
+            sess_dec0=sess_dec0,
+            sess_decn=sess_decn,
+            sess_mat=sess_mat,
+            sess_men=sess_men,
+            first_record={
+                "embed": embed0,
+                "f0": f0_0,
+                "f1": f1_0,
+                "vis_pos": vis_pos0,
+            },
+            propagate_record={
+                "embed": embed0,
+                "f0": f0_0,
+                "f1": f1_0,
+                "vis_pos": vis_pos0,
+            },
+            prompt_inputs=(pts0, lbls0),
+            repeats=args.session_warmup,
+        )
 
     fidx = 0
     mem_feats = None
@@ -311,6 +341,7 @@ def main():
     ap.add_argument("--prompt", default="seed_points", choices=["seed_points", "bounding_box"])
     ap.add_argument("--artifacts", default="auto", choices=["auto", "legacy", "specialized"])
     ap.add_argument("--max_frames", type=int, default=0, help="Max frames to process (0 = all).")
+    ap.add_argument("--session_warmup", type=int, default=1, help="Warmup passes for decoder/memory sessions before processing.")
     ap.add_argument("--video", default="", help="Optional video path. If omitted, a file dialog opens.")
     args = ap.parse_args()
 

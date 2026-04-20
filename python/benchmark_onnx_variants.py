@@ -29,6 +29,7 @@ run_encoder = None
 run_memory_attention = None
 run_memory_encoder = None
 set_cv2_threads = None
+warmup_video_runtime_sessions = None
 
 
 def _load_runtime_helpers():
@@ -46,6 +47,7 @@ def _load_runtime_helpers():
     global run_memory_attention
     global run_memory_encoder
     global set_cv2_threads
+    global warmup_video_runtime_sessions
 
     from onnx_test_utils import (
         make_encoder_session as _make_encoder_session,
@@ -62,6 +64,7 @@ def _load_runtime_helpers():
         run_memory_attention as _run_memory_attention,
         run_memory_encoder as _run_memory_encoder,
         set_cv2_threads as _set_cv2_threads,
+        warmup_video_runtime_sessions as _warmup_video_runtime_sessions,
     )
 
     make_encoder_session = _make_encoder_session
@@ -78,6 +81,7 @@ def _load_runtime_helpers():
     run_memory_attention = _run_memory_attention
     run_memory_encoder = _run_memory_encoder
     set_cv2_threads = _set_cv2_threads
+    warmup_video_runtime_sessions = _warmup_video_runtime_sessions
 
 
 def _mean_ms(values):
@@ -181,10 +185,15 @@ def _benchmark_image_decoder(sess_dec, enc_dict, prompt_inputs, repeats: int, wa
     }
 
 
-def _precompute_video_encoder(sess_enc, frames: list[np.ndarray]):
+def _precompute_video_encoder(sess_enc, frames: list[np.ndarray], warmup: int = 0):
     enc_input_name = sess_enc.get_inputs()[0].name
     enc_out_names = [o.name for o in sess_enc.get_outputs()]
     enc_h, enc_w = sess_enc.get_inputs()[0].shape[2:]
+
+    if warmup > 0 and frames:
+        tensor0, _ = prepare_image(frames[0], (enc_h, enc_w))
+        for _ in range(warmup):
+            sess_enc.run(None, {enc_input_name: tensor0})
 
     records = []
     enc_times = []
@@ -211,7 +220,7 @@ def _precompute_video_encoder(sess_enc, frames: list[np.ndarray]):
     }
 
 
-def _benchmark_video_variant(paths: dict[str, str], encoded_frames, prompt_inputs):
+def _benchmark_video_variant(paths: dict[str, str], encoded_frames, prompt_inputs, session_warmup: int = 0):
     sess_dec0 = make_safe_session(paths["decoder_init"], tag="decoder")
     if paths["decoder_propagate"] == paths["decoder_init"]:
         sess_decn = sess_dec0
@@ -219,6 +228,18 @@ def _benchmark_video_variant(paths: dict[str, str], encoded_frames, prompt_input
         sess_decn = make_safe_session(paths["decoder_propagate"], tag="decoder")
     sess_mat = make_safe_session(paths["memory_attention"], tag="memory_attention")
     sess_men = make_safe_session(paths["memory_encoder"], tag="memory_encoder")
+
+    if encoded_frames and session_warmup > 0:
+        warmup_video_runtime_sessions(
+            sess_dec0=sess_dec0,
+            sess_decn=sess_decn,
+            sess_mat=sess_mat,
+            sess_men=sess_men,
+            first_record=encoded_frames[0],
+            propagate_record=encoded_frames[1] if len(encoded_frames) > 1 else encoded_frames[0],
+            prompt_inputs=prompt_inputs,
+            repeats=session_warmup,
+        )
 
     pts0, lbls0 = prompt_inputs
     mem_feats = None
@@ -350,6 +371,13 @@ def run_image_benchmark(args, ckpt_dir: Path, enc_path: str):
             dec_path, resolved = resolve_image_decoder_path(ckpt_dir, args.prompt, mode)
         except FileNotFoundError:
             continue
+        if mode == "specialized" and resolved == "legacy-safe-seed-points":
+            print(
+                "[IMAGE] Specialized seed-point image decoder is disabled by default "
+                "because its fixed prompt slots change SAM prompt semantics. "
+                "Skipping specialized comparison."
+            )
+            continue
         print(f"[IMAGE] Benchmarking {resolved} decoder: {Path(dec_path).name}")
         sess_dec = make_safe_session(dec_path, tag="decoder")
         results[mode] = _benchmark_image_decoder(
@@ -385,7 +413,7 @@ def run_video_benchmark(args, ckpt_dir: Path, enc_path: str):
 
     frames = _load_video_frames(args.video, args.frames)
     sess_enc = make_encoder_session(enc_path)
-    enc_bench = _precompute_video_encoder(sess_enc, frames)
+    enc_bench = _precompute_video_encoder(sess_enc, frames, warmup=args.warmup)
     prompt_inputs = _prompt_inputs(args.prompt, frames[0].shape[:2], enc_bench["enc_shape"])
 
     runtime_paths_by_mode = {}
@@ -410,7 +438,14 @@ def run_video_benchmark(args, ckpt_dir: Path, enc_path: str):
         for mode in modes:
             runtime_paths = runtime_paths_by_mode[mode]
             print(f"[VIDEO] Benchmarking {runtime_paths['mode']} runtime")
-            results[mode].append(_benchmark_video_variant(runtime_paths, enc_bench["records"], prompt_inputs))
+            results[mode].append(
+                _benchmark_video_variant(
+                    runtime_paths,
+                    enc_bench["records"],
+                    prompt_inputs,
+                    session_warmup=args.session_warmup,
+                )
+            )
 
     print("")
     print("[VIDEO] Shared encoder")
@@ -480,6 +515,7 @@ def main():
     ap.add_argument("--video", default="", help="Optional video path for runtime benchmarking")
     ap.add_argument("--frames", type=int, default=16, help="Max video frames to benchmark")
     ap.add_argument("--video_order", default="both", choices=["both", "single"], help="Run video variants in both orders and report median results, or only once in legacy-then-specialized order")
+    ap.add_argument("--session_warmup", type=int, default=1, help="Warmup passes for video runtime sessions before measured runs")
     ap.add_argument("--warmup", type=int, default=3, help="Warmup runs for image decoder benchmark")
     ap.add_argument("--repeat", type=int, default=10, help="Measured runs for image decoder benchmark")
     args = ap.parse_args()

@@ -72,6 +72,12 @@ def main():
     except FileNotFoundError as exc:
         sys.exit(f"ERROR: {exc}")
     print(f"[INFO] Decoder artifacts : {artifact_mode} ({Path(dec_path).name})")
+    if artifact_mode == "legacy-safe-seed-points":
+        print(
+            "[WARN] Specialized fixed-shape image point decoder is disabled by default because "
+            "its padded prompt slots change SAM prompt semantics and hurt quality. "
+            "Using legacy decoder for seed points."
+        )
 
     sess_enc = make_encoder_session(enc_path)
     sess_dec = make_safe_session(dec_path, tag="decoder")

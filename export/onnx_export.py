@@ -8,6 +8,19 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 
+def _remove_stale_image_point_exports(outdir: str) -> None:
+    removed = []
+    for suffix in ("image_decoder_points.onnx", "image_decoder_points.onnx.data"):
+        path = os.path.join(outdir, suffix)
+        if os.path.exists(path):
+            os.remove(path)
+            removed.append(path)
+    if removed:
+        print("Removed stale experimental image point artifacts:")
+        for path in removed:
+            print(f"  - {path}")
+
+
 def _patch_repeat_interleave_for_export():
     """
     Work around ONNX exporter missing lowering for
@@ -109,13 +122,21 @@ def main(args):
     if not args.skip_specialized:
         print("Exporting specialized task-specific artifacts...")
 
-        points_decoder = ImageDecoderPredMask(sam2_model).eval().cpu()
-        export_image_decoder_points(
-            points_decoder,
-            outdir,
-            max_points=args.max_points,
-            name=model_size,
-        )
+        if args.experimental_image_points:
+            points_decoder = ImageDecoderPredMask(sam2_model).eval().cpu()
+            export_image_decoder_points(
+                points_decoder,
+                outdir,
+                max_points=args.max_points,
+                name=model_size,
+            )
+        else:
+            _remove_stale_image_point_exports(outdir)
+            print(
+                "Skipping image_decoder_points.onnx by default because the fixed-shape "
+                "image seed-point decoder is experimental and can change SAM prompt semantics. "
+                "Pass --experimental_image_points to export it explicitly."
+            )
 
         box_decoder = ImageDecoderPredMask(sam2_model).eval().cpu()
         export_image_decoder_box(box_decoder, outdir, name=model_size)
@@ -165,6 +186,11 @@ if __name__ == "__main__":
         "--skip_specialized",
         action="store_true",
         help="Skip the new specialized exports and emit only the legacy artifacts",
+    )
+    parser.add_argument(
+        "--experimental_image_points",
+        action="store_true",
+        help="Also export the fixed-shape image seed-point decoder (experimental; may reduce quality)",
     )
     args = parser.parse_args()
     main(args)
