@@ -173,6 +173,7 @@ int runOnnxTestImage(int argc,char** argv)
     string decoderPath = "image_decoder.onnx";
     string imagePath;                     // empty → file dialog
     int    threads   = (int)thread::hardware_concurrency(); if(threads<=0) threads=4;
+    threads = ArtifactResolver::preferredCpuThreads(threads);
     PromptMode mode  = PromptMode::SEED_POINTS;             // default
 
     for(int i=2;i<argc;++i)   // argv[1] is "--onnx_test_image"
@@ -218,7 +219,9 @@ int runOnnxTestImage(int argc,char** argv)
         imagePath = chosen;
     }
 
-    cout<<"[INFO] encoder="<<encoderPath<<"\n"
+    const string runtimeProfile = ArtifactResolver::preferredRuntimeProfile();
+    cout<<"[INFO] runtime_profile="<<(runtimeProfile.empty() ? "default" : runtimeProfile)<<"\n"
+        <<"       encoder="<<encoderPath<<"\n"
         <<"       decoder="<<decoderPath<<"\n"
         <<"       image  ="<<imagePath<<"\n"
         <<"       prompt ="<<(mode==PromptMode::SEED_POINTS?"seed_points":"bounding_box")<<"\n"
@@ -229,11 +232,14 @@ int runOnnxTestImage(int argc,char** argv)
     if(imgBGR.empty()){ cerr<<"[ERROR] could not load "<<imagePath<<"\n"; return 1; }
 
     /* ---------------  init SAM-2 (GPU if available)  --------------- */
+    const bool forceCpu = ArtifactResolver::isLowCostCpuProfile();
     bool cudaAvail=false;
     // OLD (kept here for reference – relied on GetAvailableProviders, which crashes in PCs with no GPU)
     // for(auto&p:Ort::GetAvailableProviders()) if(p=="CUDAExecutionProvider") cudaAvail=true;
-    cudaAvail = SAM2::hasCudaDriver();
-    string device = cudaAvail ? "cuda:0" : "cpu";
+    if (!forceCpu) {
+        cudaAvail = SAM2::hasCudaDriver();
+    }
+    string device = (forceCpu || !cudaAvail) ? "cpu" : "cuda:0";
     cout<<"[INFO] Initialising on "<<device<<"\n";
 
     encoderPath = ArtifactResolver::preferQuantizedEncoderPath(encoderPath, device);

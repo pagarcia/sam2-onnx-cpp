@@ -30,13 +30,16 @@ try:
 except Exception:
     pass
 
-ACCEL = os.getenv("SAM2_ORT_ACCEL", "auto").lower()
+RUNTIME_PROFILE = os.getenv("SAM2_ORT_RUNTIME_PROFILE", "").lower()
+CPU_LOW_COST_PROFILE = RUNTIME_PROFILE in ("cpu_lowcost", "lowcost_cpu", "cpu-lowcost", "low-cost-cpu")
+_ACCEL_ENV = os.getenv("SAM2_ORT_ACCEL")
+ACCEL = (_ACCEL_ENV.lower() if _ACCEL_ENV is not None else ("cpu" if CPU_LOW_COST_PROFILE else "auto"))
 COREML_ALL = os.getenv("SAM2_ORT_COREML_ALL", "0").lower() in ("1", "true", "yes")
 STATIC_DECODER_OPT = os.getenv("SAM2_ORT_STATIC_DECODER_OPT", "1").lower() in ("1", "true", "yes")
 EXPERIMENTAL_1FRAME_ATTN = os.getenv("SAM2_ORT_EXPERIMENTAL_1FRAME_ATTN", "0").lower() in ("1", "true", "yes")
 EXPERIMENTAL_IMAGE_POINT_DECODER = os.getenv("SAM2_ORT_EXPERIMENTAL_IMAGE_POINT_DECODER", "0").lower() in ("1", "true", "yes")
 EXPERIMENTAL_VIDEO_INIT_DECODER = os.getenv("SAM2_ORT_EXPERIMENTAL_VIDEO_INIT_DECODER", "0").lower() in ("1", "true", "yes")
-VIDEO_AUTO_POLICY = os.getenv("SAM2_ORT_VIDEO_AUTO_POLICY", "correctness").lower()
+VIDEO_AUTO_POLICY = os.getenv("SAM2_ORT_VIDEO_AUTO_POLICY", "speed" if CPU_LOW_COST_PROFILE else "correctness").lower()
 
 
 def _env_int(name: str, fallback: int, minimum: int = 0) -> int:
@@ -58,12 +61,17 @@ _STATIC_SPECIALIZED_DECODERS = {
 }
 DEFAULT_VIDEO_MEMORY_SLOTS = _env_int(
     "SAM2_ORT_VIDEO_MAX_MEMORY_FRAMES",
-    4 if VIDEO_AUTO_POLICY == "speed" else 7,
+    3 if CPU_LOW_COST_PROFILE else (4 if VIDEO_AUTO_POLICY == "speed" else 7),
     minimum=1,
 )
 DEFAULT_VIDEO_OBJECT_POINTER_SLOTS = _env_int(
     "SAM2_ORT_VIDEO_MAX_OBJECT_POINTERS",
-    8 if VIDEO_AUTO_POLICY == "speed" else 16,
+    4 if CPU_LOW_COST_PROFILE else (8 if VIDEO_AUTO_POLICY == "speed" else 16),
+    minimum=1,
+)
+DEFAULT_CPU_THREADS = _env_int(
+    "SAM2_ORT_CPU_THREADS",
+    min(4, max(1, os.cpu_count() or 4)) if CPU_LOW_COST_PROFILE else max(1, (os.cpu_count() or 8) - 1),
     minimum=1,
 )
 
@@ -71,6 +79,7 @@ DEFAULT_VIDEO_OBJECT_POINTER_SLOTS = _env_int(
 def print_system_info() -> None:
     print("[INFO] OS :", sys.platform)
     print("[INFO] ONNX Runtime providers (available) :", ort.get_available_providers())
+    print("[INFO] Runtime profile :", RUNTIME_PROFILE or "default")
 
 
 def set_cv2_threads(n: int = 1) -> None:
@@ -152,7 +161,7 @@ def make_encoder_session(
     path = str(Path(path).resolve())
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
-    so.intra_op_num_threads = max(1, (os.cpu_count() or 8) - 1)
+    so.intra_op_num_threads = DEFAULT_CPU_THREADS
     so.inter_op_num_threads = 1
     so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
 
@@ -161,7 +170,7 @@ def make_encoder_session(
     if providers is not None:
         attempt_lists = [list(providers)]
     else:
-        if ACCEL == "cpu":
+        if CPU_LOW_COST_PROFILE or ACCEL == "cpu":
             attempt_lists = [["CPUExecutionProvider"]]
         elif ACCEL == "cuda" and "CUDAExecutionProvider" in available:
             attempt_lists = [_cuda_providers()]
@@ -218,6 +227,8 @@ def make_safe_session(
         so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     else:
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+    so.intra_op_num_threads = DEFAULT_CPU_THREADS
+    so.inter_op_num_threads = 1
     so.add_session_config_entry("session.disable_gemm_fast_gelu_fusion", "1")
 
     available = ort.get_available_providers()
@@ -225,7 +236,7 @@ def make_safe_session(
     if providers is not None:
         primary = list(providers)
     else:
-        if ACCEL == "cpu":
+        if CPU_LOW_COST_PROFILE or ACCEL == "cpu":
             primary = ["CPUExecutionProvider"]
         elif ACCEL == "cuda" and "CUDAExecutionProvider" in available:
             primary = _cuda_providers()
@@ -429,7 +440,9 @@ def prefer_quantized_encoder(
     available = ort.get_available_providers()
 
     accel = False
-    if ACCEL == "cuda" and "CUDAExecutionProvider" in available:
+    if CPU_LOW_COST_PROFILE:
+        accel = False
+    elif ACCEL == "cuda" and "CUDAExecutionProvider" in available:
         accel = True
     elif ACCEL == "coreml" and "CoreMLExecutionProvider" in available:
         accel = True

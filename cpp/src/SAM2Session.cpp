@@ -1,4 +1,5 @@
 #include "SAM2.h"
+#include "ArtifactResolver.h"
 
 #include <algorithm>
 #include <cctype>
@@ -38,15 +39,6 @@ std::string lowerCopy(const std::string &value)
     return lowered;
 }
 
-std::string getenvLowerCopy(const char* name, const std::string &fallback = "")
-{
-    const char* value = std::getenv(name);
-    if (!value) {
-        return fallback;
-    }
-    return lowerCopy(value);
-}
-
 size_t getenvSizeT(const char* name, size_t fallback, size_t minValue)
 {
     const char* value = std::getenv(name);
@@ -64,14 +56,22 @@ size_t getenvSizeT(const char* name, size_t fallback, size_t minValue)
 
 size_t preferredVideoMemoryFrameLimit()
 {
-    const std::string autoPolicy = getenvLowerCopy("SAM2_ORT_VIDEO_AUTO_POLICY", "correctness");
+    if (ArtifactResolver::isLowCostCpuProfile()) {
+        return getenvSizeT("SAM2_ORT_VIDEO_MAX_MEMORY_FRAMES", 3u, 1u);
+    }
+
+    const std::string autoPolicy = ArtifactResolver::preferredVideoAutoPolicy();
     const size_t fallback = autoPolicy == "speed" ? 4u : 7u;
     return getenvSizeT("SAM2_ORT_VIDEO_MAX_MEMORY_FRAMES", fallback, 1u);
 }
 
 size_t preferredVideoObjectPointerLimit()
 {
-    const std::string autoPolicy = getenvLowerCopy("SAM2_ORT_VIDEO_AUTO_POLICY", "correctness");
+    if (ArtifactResolver::isLowCostCpuProfile()) {
+        return getenvSizeT("SAM2_ORT_VIDEO_MAX_OBJECT_POINTERS", 4u, 1u);
+    }
+
+    const std::string autoPolicy = ArtifactResolver::preferredVideoAutoPolicy();
     const size_t fallback = autoPolicy == "speed" ? 8u : 16u;
     return getenvSizeT("SAM2_ORT_VIDEO_MAX_OBJECT_POINTERS", fallback, 1u);
 }

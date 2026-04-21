@@ -52,13 +52,50 @@ inline std::string normalizePath(const std::filesystem::path &path)
     return path.lexically_normal().string();
 }
 
+inline std::string preferredRuntimeProfile();
+inline bool isLowCostCpuProfile();
+
 inline std::string preferredVideoAutoPolicy()
 {
     const char *value = std::getenv("SAM2_ORT_VIDEO_AUTO_POLICY");
     if (!value) {
-        return "correctness";
+        return isLowCostCpuProfile() ? "speed" : "correctness";
     }
     return lowerCopy(value);
+}
+
+inline std::string preferredRuntimeProfile()
+{
+    const char *value = std::getenv("SAM2_ORT_RUNTIME_PROFILE");
+    if (!value) {
+        return "";
+    }
+    return lowerCopy(value);
+}
+
+inline bool isLowCostCpuProfile()
+{
+    const std::string profile = preferredRuntimeProfile();
+    return profile == "cpu_lowcost"
+        || profile == "lowcost_cpu"
+        || profile == "cpu-lowcost"
+        || profile == "low-cost-cpu";
+}
+
+inline int preferredCpuThreads(int fallback)
+{
+    const char *value = std::getenv("SAM2_ORT_CPU_THREADS");
+    if (value && *value) {
+        try {
+            return std::max(1, std::stoi(value));
+        } catch (...) {
+        }
+    }
+
+    if (isLowCostCpuProfile()) {
+        return std::max(1, std::min(fallback, 4));
+    }
+    return std::max(1, fallback);
 }
 
 inline bool useExperimentalVideoInitDecoder()
