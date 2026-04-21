@@ -147,6 +147,10 @@ bool SAM2::clearSessions()
         m_cachedEncoderOutputs.clear();
 
         m_hasDedicatedPropDecoder = false;
+        m_cudaMemoryInfo = Ort::MemoryInfo{nullptr};
+        m_useCudaOutputBinding = false;
+        m_cudaDeviceId = 0;
+        m_device = "cpu";
         resetMemory();
     }
     catch (...) {
@@ -315,6 +319,21 @@ int SAM2::findNameIndex(const std::vector<const char*> &names, const std::string
     return -1;
 }
 
+Ort::MemoryInfo SAM2::cloneMemoryInfo(const Ort::ConstMemoryInfo &memoryInfo)
+{
+    const std::string allocatorName = memoryInfo.GetAllocatorName();
+    return Ort::MemoryInfo(
+        allocatorName.c_str(),
+        memoryInfo.GetAllocatorType(),
+        memoryInfo.GetDeviceId(),
+        memoryInfo.GetMemoryType());
+}
+
+Ort::MemoryInfo SAM2::cloneTensorMemoryInfo(const Ort::Value &tensor)
+{
+    return cloneMemoryInfo(tensor.GetTensorMemoryInfo());
+}
+
 bool SAM2::isStaticOptimizableModel(const std::string &modelPath)
 {
     const std::string lowered = lowerCopy(modelPath);
@@ -408,6 +427,22 @@ bool SAM2::initialize(const std::string &encoderPath,
                       std::string device)
 {
     clearSessions();
+    m_device = device;
+    m_useCudaOutputBinding = false;
+    m_cudaDeviceId = 0;
+    m_cudaMemoryInfo = Ort::MemoryInfo{nullptr};
+
+#if !defined(__APPLE__)
+    if (device.rfind("cuda:", 0) == 0) {
+        try {
+            m_cudaDeviceId = std::stoi(device.substr(5));
+        } catch (...) {
+            m_cudaDeviceId = 0;
+        }
+        m_cudaMemoryInfo = Ort::MemoryInfo("Cuda", OrtDeviceAllocator, m_cudaDeviceId, OrtMemTypeDefault);
+        m_useCudaOutputBinding = true;
+    }
+#endif
 
     if (!modelExists(encoderPath) || !modelExists(decoderPath)) {
         std::cerr << "[ERROR] Model file not found.\n";
@@ -917,19 +952,22 @@ std::vector<Ort::Value> SAM2::buildDecoderInputs(const std::vector<SAM2Node> &in
         }
 
         if (lowered.find("image_embed") != std::string::npos) {
-            inputs.push_back(createTensorView<float>(m_memoryInfo, primaryFeature));
+            const Ort::MemoryInfo featureMemoryInfo = cloneTensorMemoryInfo(primaryFeature);
+            inputs.push_back(createTensorView<float>(featureMemoryInfo, primaryFeature));
             continue;
         }
 
         if (lowered.find("high_res_feats_0") != std::string::npos
             || lowered.find("high_res_features1") != std::string::npos) {
-            inputs.push_back(createTensorView<float>(m_memoryInfo, highResFeatures0));
+            const Ort::MemoryInfo featureMemoryInfo = cloneTensorMemoryInfo(highResFeatures0);
+            inputs.push_back(createTensorView<float>(featureMemoryInfo, highResFeatures0));
             continue;
         }
 
         if (lowered.find("high_res_feats_1") != std::string::npos
             || lowered.find("high_res_features2") != std::string::npos) {
-            inputs.push_back(createTensorView<float>(m_memoryInfo, highResFeatures1));
+            const Ort::MemoryInfo featureMemoryInfo = cloneTensorMemoryInfo(highResFeatures1);
+            inputs.push_back(createTensorView<float>(featureMemoryInfo, highResFeatures1));
             continue;
         }
 
@@ -1100,7 +1138,8 @@ std::vector<Ort::Value> SAM2::buildMemAttentionInputs(Ort::Value &currentVisionF
         const std::string lowered = lowerCopy(node.name);
 
         if (lowered.find("current_vision_feat") != std::string::npos) {
-            inputs.push_back(createTensorView<float>(m_memoryInfo, currentVisionFeat));
+            const Ort::MemoryInfo featureMemoryInfo = cloneTensorMemoryInfo(currentVisionFeat);
+            inputs.push_back(createTensorView<float>(featureMemoryInfo, currentVisionFeat));
             continue;
         }
 
@@ -1108,7 +1147,8 @@ std::vector<Ort::Value> SAM2::buildMemAttentionInputs(Ort::Value &currentVisionF
             if (!currentVisionPosEmbed) {
                 throw std::runtime_error("Memory attention requires current_vision_pos_embed, but encoder did not provide it.");
             }
-            inputs.push_back(createTensorView<float>(m_memoryInfo, *currentVisionPosEmbed));
+            const Ort::MemoryInfo featureMemoryInfo = cloneTensorMemoryInfo(*currentVisionPosEmbed);
+            inputs.push_back(createTensorView<float>(featureMemoryInfo, *currentVisionPosEmbed));
             continue;
         }
 
@@ -1156,22 +1196,24 @@ std::vector<Ort::Value> SAM2::buildMemEncoderInputs(Ort::Value &maskForMem,
         const std::string lowered = lowerCopy(node.name);
 
         if (lowered.find("mask_for_mem") != std::string::npos) {
+            const Ort::MemoryInfo maskMemoryInfo = cloneTensorMemoryInfo(maskForMem);
             auto maskShape = maskForMem.GetTensorTypeAndShapeInfo().GetShape();
             if (maskShape.size() >= 4 && maskShape[1] > 1) {
                 maskShape[1] = 1;
                 inputs.push_back(
                     createTensorView<float>(
-                        m_memoryInfo,
+                        maskMemoryInfo,
                         maskForMem.GetTensorMutableData<float>(),
                         maskShape));
             } else {
-                inputs.push_back(createTensorView<float>(m_memoryInfo, maskForMem));
+                inputs.push_back(createTensorView<float>(maskMemoryInfo, maskForMem));
             }
             continue;
         }
 
         if (lowered.find("pix_feat") != std::string::npos) {
-            inputs.push_back(createTensorView<float>(m_memoryInfo, pixFeat));
+            const Ort::MemoryInfo pixFeatMemoryInfo = cloneTensorMemoryInfo(pixFeat);
+            inputs.push_back(createTensorView<float>(pixFeatMemoryInfo, pixFeat));
             continue;
         }
 
@@ -1212,8 +1254,72 @@ SAM2::runSession(Ort::Session* session,
 }
 
 std::variant<std::vector<Ort::Value>, std::string>
+SAM2::runSessionWithOutputMemory(Ort::Session* session,
+                                 const std::vector<const char*> &inputNames,
+                                 const std::vector<const char*> &outputNames,
+                                 const std::vector<Ort::Value> &inputTensors,
+                                 const std::vector<const Ort::MemoryInfo*> &outputMemoryInfos,
+                                 const std::string &debugName)
+{
+    if (!session) {
+        return std::string("[ERROR] runSessionWithOutputMemory(" + debugName + "): session is null.");
+    }
+
+    if (inputNames.size() != inputTensors.size()) {
+        std::ostringstream oss;
+        oss << "[ERROR] runSessionWithOutputMemory(" << debugName
+            << "): input name count (" << inputNames.size()
+            << ") does not match tensor count (" << inputTensors.size() << ").";
+        return oss.str();
+    }
+
+    if (outputNames.size() != outputMemoryInfos.size()) {
+        std::ostringstream oss;
+        oss << "[ERROR] runSessionWithOutputMemory(" << debugName
+            << "): output name count (" << outputNames.size()
+            << ") does not match memory binding count (" << outputMemoryInfos.size() << ").";
+        return oss.str();
+    }
+
+    try {
+        Ort::IoBinding ioBinding(*session);
+        for (size_t i = 0; i < inputNames.size(); ++i) {
+            ioBinding.BindInput(inputNames[i], inputTensors[i]);
+        }
+
+        for (size_t i = 0; i < outputNames.size(); ++i) {
+            const Ort::MemoryInfo* memoryInfo = outputMemoryInfos[i] ? outputMemoryInfos[i] : &m_memoryInfo;
+            ioBinding.BindOutput(outputNames[i], *memoryInfo);
+        }
+
+        ioBinding.SynchronizeInputs();
+        session->Run(Ort::RunOptions{nullptr}, ioBinding);
+        ioBinding.SynchronizeOutputs();
+        return ioBinding.GetOutputValues();
+    }
+    catch (const std::exception &e) {
+        std::ostringstream oss;
+        oss << "[ERROR] runSessionWithOutputMemory(" << debugName << ") => " << e.what();
+        return oss.str();
+    }
+}
+
+std::variant<std::vector<Ort::Value>, std::string>
 SAM2::runImageEncoderSession(const std::vector<Ort::Value> &inputTensors)
 {
+    if (m_useCudaOutputBinding) {
+        std::vector<const Ort::MemoryInfo*> outputMemoryInfos(
+            m_imgEncoderOutputNames.size(),
+            &m_cudaMemoryInfo);
+        return runSessionWithOutputMemory(
+            m_imgEncoderSession.get(),
+            m_imgEncoderInputNames,
+            m_imgEncoderOutputNames,
+            inputTensors,
+            outputMemoryInfos,
+            "imgEncoderSession(cuda-bound)");
+    }
+
     return runSession(
         m_imgEncoderSession.get(),
         m_imgEncoderInputNames,
@@ -1225,6 +1331,24 @@ SAM2::runImageEncoderSession(const std::vector<Ort::Value> &inputTensors)
 std::variant<std::vector<Ort::Value>, std::string>
 SAM2::runImageDecoderSession(const std::vector<Ort::Value> &inputTensors)
 {
+    if (m_useCudaOutputBinding) {
+        std::vector<const Ort::MemoryInfo*> outputMemoryInfos;
+        outputMemoryInfos.reserve(m_imgDecoderOutputNames.size());
+        for (const char* outputName : m_imgDecoderOutputNames) {
+            const std::string lowered = outputName ? lowerCopy(outputName) : std::string();
+            outputMemoryInfos.push_back(
+                lowered.find("mask_for_mem") != std::string::npos ? &m_cudaMemoryInfo : &m_memoryInfo);
+        }
+
+        return runSessionWithOutputMemory(
+            m_imgDecoderSession.get(),
+            m_imgDecoderInputNames,
+            m_imgDecoderOutputNames,
+            inputTensors,
+            outputMemoryInfos,
+            "imgDecoderSession(cuda-bound)");
+    }
+
     return runSession(
         m_imgDecoderSession.get(),
         m_imgDecoderInputNames,
@@ -1236,6 +1360,25 @@ SAM2::runImageDecoderSession(const std::vector<Ort::Value> &inputTensors)
 std::variant<std::vector<Ort::Value>, std::string>
 SAM2::runVideoPropDecoderSession(const std::vector<Ort::Value> &inputTensors)
 {
+    if (m_useCudaOutputBinding) {
+        const auto &outputNames = getPropDecoderOutputNames();
+        std::vector<const Ort::MemoryInfo*> outputMemoryInfos;
+        outputMemoryInfos.reserve(outputNames.size());
+        for (const char* outputName : outputNames) {
+            const std::string lowered = outputName ? lowerCopy(outputName) : std::string();
+            outputMemoryInfos.push_back(
+                lowered.find("mask_for_mem") != std::string::npos ? &m_cudaMemoryInfo : &m_memoryInfo);
+        }
+
+        return runSessionWithOutputMemory(
+            getPropDecoderSession(),
+            getPropDecoderInputNames(),
+            outputNames,
+            inputTensors,
+            outputMemoryInfos,
+            "videoPropDecoderSession(cuda-bound)");
+    }
+
     return runSession(
         getPropDecoderSession(),
         getPropDecoderInputNames(),
@@ -1247,6 +1390,19 @@ SAM2::runVideoPropDecoderSession(const std::vector<Ort::Value> &inputTensors)
 std::variant<std::vector<Ort::Value>, std::string>
 SAM2::runMemAttentionSession(const std::vector<Ort::Value> &inputTensors)
 {
+    if (m_useCudaOutputBinding) {
+        std::vector<const Ort::MemoryInfo*> outputMemoryInfos(
+            m_memAttentionOutputNames.size(),
+            &m_cudaMemoryInfo);
+        return runSessionWithOutputMemory(
+            m_memAttentionSession.get(),
+            m_memAttentionInputNames,
+            m_memAttentionOutputNames,
+            inputTensors,
+            outputMemoryInfos,
+            "memAttentionSession(cuda-bound)");
+    }
+
     return runSession(
         m_memAttentionSession.get(),
         m_memAttentionInputNames,

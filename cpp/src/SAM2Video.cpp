@@ -75,12 +75,7 @@ Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage,
                 feat1,
                 &m_promptPointCoords,
                 &m_promptPointLabels);
-            auto decRes = runSession(
-                m_imgDecoderSession.get(),
-                m_imgDecoderInputNames,
-                m_imgDecoderVideoOutputNames,
-                decInputs,
-                "videoDecoderInit");
+            auto decRes = runImageDecoderSession(decInputs);
             decTimeMs = std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() - decStart)
                             .count();
@@ -90,8 +85,9 @@ Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage,
             }
 
             auto &decOuts = std::get<0>(decRes);
-            const int initMaskForMemIndex = findNameIndex(m_imgDecoderVideoOutputNames, "mask_for_mem");
-            const int initPredMaskIndex = findNameIndex(m_imgDecoderVideoOutputNames, "pred_mask");
+            const auto &initOutputNames = m_imgDecoderOutputNames;
+            const int initMaskForMemIndex = findNameIndex(initOutputNames, "mask_for_mem");
+            const int initPredMaskIndex = findNameIndex(initOutputNames, "pred_mask");
             if (initMaskForMemIndex < 0 || initPredMaskIndex < 0
                 || decOuts.size() <= static_cast<size_t>(std::max(initMaskForMemIndex, initPredMaskIndex))) {
                 std::cerr << "[ERROR] videoDecoderInit returned insufficient outputs.\n";
@@ -122,7 +118,7 @@ Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage,
 
             m_memoryStateOutputs = std::move(std::get<0>(memEncRes));
             storeConditioningMemory(m_memoryStateOutputs);
-            storeConditioningObjectPointer(decOuts, m_imgDecoderVideoOutputNames, currentFrameIndex);
+            storeConditioningObjectPointer(decOuts, initOutputNames, currentFrameIndex);
             ++m_videoFrameIndex;
 
             std::cout << "[INFO] Frame0 times => Enc: " << encTimeMs
@@ -135,12 +131,7 @@ Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage,
         const auto attnStart = std::chrono::steady_clock::now();
         std::vector<float> emptyMemory0;
         std::vector<Ort::Value> memAttnInputs = buildMemAttentionInputs(currVisionFeat, visionPos, emptyMemory0);
-        auto attnRes = runSession(
-            m_memAttentionSession.get(),
-            m_memAttentionInputNames,
-            m_memAttentionOutputNames,
-            memAttnInputs,
-            "memoryAttention");
+        auto attnRes = runMemAttentionSession(memAttnInputs);
         attnTimeMs = std::chrono::duration<double, std::milli>(
                          std::chrono::steady_clock::now() - attnStart)
                          .count();
@@ -163,12 +154,7 @@ Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage,
             fusedEmbed,
             feat0,
             feat1);
-        auto decRes = runSession(
-            getPropDecoderSession(),
-            getPropDecoderInputNames(),
-            getPropDecoderVideoOutputNames(),
-            decInputs,
-            "videoDecoderPropagate");
+        auto decRes = runVideoPropDecoderSession(decInputs);
         decTimeMs = std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - decStart)
                         .count();
@@ -178,7 +164,7 @@ Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage,
         }
 
         auto &decOuts = std::get<0>(decRes);
-        const auto &propOutputNames = getPropDecoderVideoOutputNames();
+        const auto &propOutputNames = getPropDecoderOutputNames();
         const int propMaskForMemIndex = findNameIndex(propOutputNames, "mask_for_mem");
         const int propPredMaskIndex = findNameIndex(propOutputNames, "pred_mask");
         if (propMaskForMemIndex < 0 || propPredMaskIndex < 0
@@ -211,7 +197,7 @@ Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage,
 
         m_memoryStateOutputs = std::move(std::get<0>(memEncRes));
         appendRecentMemory(m_memoryStateOutputs);
-        appendRecentObjectPointer(decOuts, getPropDecoderVideoOutputNames(), currentFrameIndex);
+        appendRecentObjectPointer(decOuts, propOutputNames, currentFrameIndex);
         ++m_videoFrameIndex;
 
         std::cout << "[INFO] FrameN times => Enc: " << encTimeMs

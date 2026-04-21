@@ -216,6 +216,8 @@ private:
                                                     std::initializer_list<const char*> preferredKeys);
     static int findNodeIndex(const std::vector<SAM2Node> &nodes, const std::string &key);
     static int findNameIndex(const std::vector<const char*> &names, const std::string &key);
+    static Ort::MemoryInfo cloneMemoryInfo(const Ort::ConstMemoryInfo &memoryInfo);
+    static Ort::MemoryInfo cloneTensorMemoryInfo(const Ort::Value &tensor);
     static bool isStaticOptimizableModel(const std::string &modelPath);
     static bool shouldUseCpuArena(const std::string &device);
     bool initializeNamedSession(std::unique_ptr<Ort::Session> *sessionOut,
@@ -263,6 +265,13 @@ private:
                const std::vector<const char*> &outputNames,
                const std::vector<Ort::Value> &inputTensors,
                const std::string &debugName);
+    std::variant<std::vector<Ort::Value>, std::string>
+    runSessionWithOutputMemory(Ort::Session* session,
+                               const std::vector<const char*> &inputNames,
+                               const std::vector<const char*> &outputNames,
+                               const std::vector<Ort::Value> &inputTensors,
+                               const std::vector<const Ort::MemoryInfo*> &outputMemoryInfos,
+                               const std::string &debugName);
 
 private:
     // 1) Single-frame sessions
@@ -354,6 +363,10 @@ private:
     Ort::Env m_memEncoderEnv{ORT_LOGGING_LEVEL_WARNING, "mem_encoder"};
 
     Ort::MemoryInfo m_memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    Ort::MemoryInfo m_cudaMemoryInfo{nullptr};
+    bool m_useCudaOutputBinding = false;
+    int m_cudaDeviceId = 0;
+    std::string m_device = "cpu";
 };
 
 #endif // SAMCPP__SAM_H_
