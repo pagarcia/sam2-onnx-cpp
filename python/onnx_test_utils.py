@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -34,6 +35,8 @@ COREML_ALL = os.getenv("SAM2_ORT_COREML_ALL", "0").lower() in ("1", "true", "yes
 STATIC_DECODER_OPT = os.getenv("SAM2_ORT_STATIC_DECODER_OPT", "1").lower() in ("1", "true", "yes")
 EXPERIMENTAL_1FRAME_ATTN = os.getenv("SAM2_ORT_EXPERIMENTAL_1FRAME_ATTN", "0").lower() in ("1", "true", "yes")
 EXPERIMENTAL_IMAGE_POINT_DECODER = os.getenv("SAM2_ORT_EXPERIMENTAL_IMAGE_POINT_DECODER", "0").lower() in ("1", "true", "yes")
+EXPERIMENTAL_VIDEO_INIT_DECODER = os.getenv("SAM2_ORT_EXPERIMENTAL_VIDEO_INIT_DECODER", "0").lower() in ("1", "true", "yes")
+VIDEO_AUTO_POLICY = os.getenv("SAM2_ORT_VIDEO_AUTO_POLICY", "correctness").lower()
 
 _STATIC_SPECIALIZED_DECODERS = {
     "image_decoder_points.onnx",
@@ -42,6 +45,8 @@ _STATIC_SPECIALIZED_DECODERS = {
     "video_decoder_propagate.onnx",
     "memory_attention_no_objptr_1frame.onnx",
 }
+DEFAULT_VIDEO_MEMORY_SLOTS = 7
+DEFAULT_VIDEO_OBJECT_POINTER_SLOTS = 16
 
 
 def print_system_info() -> None:
@@ -304,14 +309,28 @@ def resolve_video_runtime_paths(
             "decoder_propagate": "video_decoder_propagate.onnx",
         },
     )
+    specialized_attn_objptr = Path(ckpt_dir) / "memory_attention_objptr.onnx"
     specialized_attn_1frame = Path(ckpt_dir) / "memory_attention_no_objptr_1frame.onnx"
     specialized_attn_dynamic = Path(ckpt_dir) / "memory_attention_no_objptr.onnx"
-    specialized_lite_memenc = Path(ckpt_dir) / "memory_encoder_lite.onnx"
     legacy_memenc = Path(ckpt_dir) / "memory_encoder.onnx"
+    specialized_lite_memenc = Path(ckpt_dir) / "memory_encoder_lite.onnx"
+
+    def _hybrid_result() -> Dict[str, str]:
+        hybrid_paths = {
+            "decoder_init": legacy["decoder_init"],
+            "decoder_propagate": specialized_base["decoder_propagate"],
+            "memory_attention": legacy["memory_attention"],
+            "memory_encoder": legacy["memory_encoder"],
+        }
+        _ensure_paths_exist(hybrid_paths, "hybrid video")
+        return {"mode": "hybrid-propagate", **{k: str(v.resolve()) for k, v in hybrid_paths.items()}}
 
     def _specialized_result() -> Dict[str, str]:
         _ensure_paths_exist(specialized_base, "specialized core")
-        if EXPERIMENTAL_1FRAME_ATTN and specialized_attn_1frame.exists():
+        if specialized_attn_objptr.exists():
+            memory_attention = specialized_attn_objptr
+            mode_suffix = "objptr"
+        elif EXPERIMENTAL_1FRAME_ATTN and specialized_attn_1frame.exists():
             memory_attention = specialized_attn_1frame
             mode_suffix = "1frame-attn"
         elif specialized_attn_dynamic.exists():
@@ -323,13 +342,16 @@ def resolve_video_runtime_paths(
         else:
             raise FileNotFoundError(
                 "Missing specialized memory attention artifacts:\n"
+                f"  {specialized_attn_objptr}\n"
                 f"  {specialized_attn_1frame}\n"
                 f"  {specialized_attn_dynamic}"
             )
-        memenc_path = specialized_lite_memenc if specialized_lite_memenc.exists() else legacy_memenc
+        # Prefer the legacy memory encoder when present because it exports
+        # temporal_code, which lets the runtime rebuild SAM2's temporal memory positions.
+        memenc_path = legacy_memenc if legacy_memenc.exists() else specialized_lite_memenc
         if not memenc_path.exists():
             raise FileNotFoundError(f"Missing specialized memory encoder fallback: {memenc_path}")
-        mode = "specialized" if specialized_lite_memenc.exists() else "specialized-hybrid"
+        mode = "specialized-temporal" if memenc_path == legacy_memenc else "specialized-lite"
         mode = f"{mode}-{mode_suffix}"
         return {
             "mode": mode,
@@ -338,17 +360,39 @@ def resolve_video_runtime_paths(
             "memory_encoder": str(memenc_path.resolve()),
         }
 
+    legacy_available = all(path.exists() for path in legacy.values())
+    hybrid_available = legacy_available and specialized_base["decoder_propagate"].exists()
+    specialized_available = all(path.exists() for path in specialized_base.values()) and (
+        specialized_attn_objptr.exists() or specialized_attn_1frame.exists() or specialized_attn_dynamic.exists()
+    )
+
+    def _preferred_optimized_result() -> Dict[str, str]:
+        # Fixed-slot prompt init decoders change SAM prompt semantics and currently
+        # poison the first-frame memory state, so the safe optimized path keeps the
+        # legacy promptable init decoder and only specializes prompt-free propagation.
+        if not EXPERIMENTAL_VIDEO_INIT_DECODER and hybrid_available:
+            return _hybrid_result()
+        if specialized_available:
+            return _specialized_result()
+        if hybrid_available:
+            return _hybrid_result()
+        raise FileNotFoundError("Missing optimized video artifacts")
+
     if artifacts == "legacy":
         _ensure_paths_exist(legacy, "legacy")
         return {"mode": "legacy", **{k: str(v.resolve()) for k, v in legacy.items()}}
 
     if artifacts == "specialized":
-        return _specialized_result()
+        return _preferred_optimized_result()
 
-    if all(path.exists() for path in specialized_base.values()) and (
-        specialized_attn_1frame.exists() or specialized_attn_dynamic.exists()
-    ):
-        return _specialized_result()
+    prefer_specialized = VIDEO_AUTO_POLICY in ("speed", "specialized")
+
+    if prefer_specialized and (hybrid_available or specialized_available):
+        return _preferred_optimized_result()
+    if legacy_available:
+        return {"mode": "legacy", **{k: str(v.resolve()) for k, v in legacy.items()}}
+    if hybrid_available or specialized_available:
+        return _preferred_optimized_result()
 
     _ensure_paths_exist(legacy, "legacy")
     return {"mode": "legacy", **{k: str(v.resolve()) for k, v in legacy.items()}}
@@ -582,6 +626,7 @@ def run_memory_attention(
     memory_1: np.ndarray,
     memory_pos_embed: np.ndarray,
     memory_0: Optional[np.ndarray] = None,
+    obj_ptr_offsets: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     input_names = [inp.name for inp in sess_mat.get_inputs()]
     feed = {}
@@ -603,6 +648,11 @@ def run_memory_attention(
         if memory_0 is None:
             memory_0 = np.zeros((0, 256), np.float32)
         feed[name] = as_f32c(memory_0)
+    name = _find_session_name(input_names, "obj_ptr_offsets")
+    if name is not None:
+        if obj_ptr_offsets is None:
+            obj_ptr_offsets = np.zeros((0,), np.float32)
+        feed[name] = as_f32c(obj_ptr_offsets)
 
     return sess_mat.run(None, feed)[0]
 
@@ -640,6 +690,171 @@ def run_memory_encoder(
     return maskmem_features, maskmem_pos_enc, temporal_code
 
 
+def _memory_attention_single_frame_only(sess_mat: InferenceSession) -> bool:
+    for inp in sess_mat.get_inputs():
+        if "memory_1" not in inp.name.lower():
+            continue
+        shape = inp.shape
+        if not shape:
+            return False
+        return shape[0] == 1
+    return False
+
+
+def _memory_attention_uses_object_pointers(sess_mat: InferenceSession) -> bool:
+    input_names = [inp.name.lower() for inp in sess_mat.get_inputs()]
+    return any("obj_ptr_offsets" in name for name in input_names)
+
+
+def _normalize_temporal_code(temporal_code: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    if temporal_code is None:
+        return None
+    code = as_f32c(temporal_code)
+    if code.ndim == 4:
+        return code.reshape(code.shape[0], 1, code.shape[-1])
+    if code.ndim == 3:
+        return code.reshape(code.shape[0], 1, code.shape[-1])
+    if code.ndim == 2:
+        return code.reshape(code.shape[0], 1, code.shape[1])
+    return None
+
+
+@dataclass
+class VideoMemoryFrame:
+    features: np.ndarray
+    pos: np.ndarray
+    temporal_code: Optional[np.ndarray]
+    obj_ptr: Optional[np.ndarray]
+    frame_index: int
+
+
+@dataclass
+class VideoMemoryBank:
+    max_slots: int = DEFAULT_VIDEO_MEMORY_SLOTS
+    max_pointer_slots: int = DEFAULT_VIDEO_OBJECT_POINTER_SLOTS
+    single_frame_only: bool = False
+    use_object_pointers: bool = False
+    conditioning: List[VideoMemoryFrame] = field(default_factory=list)
+    recent: List[VideoMemoryFrame] = field(default_factory=list)
+
+    @classmethod
+    def from_session(cls, sess_mat: InferenceSession) -> "VideoMemoryBank":
+        return cls(
+            single_frame_only=_memory_attention_single_frame_only(sess_mat),
+            use_object_pointers=_memory_attention_uses_object_pointers(sess_mat),
+        )
+
+    def _update_capacity(self, temporal_code: Optional[np.ndarray]) -> Optional[np.ndarray]:
+        normalized = _normalize_temporal_code(temporal_code)
+        if normalized is not None and normalized.shape[0] > 0:
+            self.max_slots = max(self.max_slots, int(normalized.shape[0]))
+        return normalized
+
+    def _make_frame(
+        self,
+        features: np.ndarray,
+        pos: np.ndarray,
+        temporal_code: Optional[np.ndarray],
+        obj_ptr: Optional[np.ndarray],
+        frame_index: int,
+    ) -> VideoMemoryFrame:
+        normalized_code = self._update_capacity(temporal_code)
+        normalized_obj_ptr = None
+        if obj_ptr is not None:
+            normalized_obj_ptr = as_f32c(obj_ptr)
+            if normalized_obj_ptr.ndim == 1:
+                normalized_obj_ptr = normalized_obj_ptr.reshape(1, -1)
+        return VideoMemoryFrame(
+            features=as_f32c(features),
+            pos=as_f32c(pos),
+            temporal_code=normalized_code,
+            obj_ptr=normalized_obj_ptr,
+            frame_index=frame_index,
+        )
+
+    def _trim_recent(self) -> None:
+        if self.single_frame_only:
+            max_recent = 1
+        else:
+            max_recent = self.max_slots - len(self.conditioning)
+        max_recent = max(0, max_recent)
+        if len(self.recent) > max_recent:
+            del self.recent[max_recent:]
+
+    def set_conditioning(
+        self,
+        features: np.ndarray,
+        pos: np.ndarray,
+        temporal_code: Optional[np.ndarray],
+        obj_ptr: Optional[np.ndarray] = None,
+        frame_index: int = 0,
+    ) -> None:
+        self.conditioning = [self._make_frame(features, pos, temporal_code, obj_ptr, frame_index)]
+        self._trim_recent()
+
+    def append_recent(
+        self,
+        features: np.ndarray,
+        pos: np.ndarray,
+        temporal_code: Optional[np.ndarray],
+        obj_ptr: Optional[np.ndarray] = None,
+        frame_index: int = 0,
+    ) -> None:
+        self.recent.insert(0, self._make_frame(features, pos, temporal_code, obj_ptr, frame_index))
+        self._trim_recent()
+
+    def build_attention_state(self) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        entries: list[tuple[int, VideoMemoryFrame]] = []
+        if self.single_frame_only:
+            if self.recent:
+                entries.append((1, self.recent[0]))
+            elif self.conditioning:
+                entries.append((0, self.conditioning[0]))
+        else:
+            entries.extend((0, frame) for frame in self.conditioning)
+            max_recent = max(0, self.max_slots - len(self.conditioning))
+            entries.extend((idx + 1, frame) for idx, frame in enumerate(self.recent[:max_recent]))
+
+        if not entries:
+            return None, None
+
+        memory_1 = np.concatenate([frame.features for _, frame in entries], axis=0).astype(np.float32, copy=False)
+        pos_parts = []
+        for t_pos, frame in entries:
+            pos = frame.pos
+            if frame.temporal_code is not None and frame.temporal_code.shape[0] > t_pos:
+                temporal_index = frame.temporal_code.shape[0] - t_pos - 1
+                pos = pos + frame.temporal_code[temporal_index : temporal_index + 1]
+            pos_parts.append(pos.astype(np.float32, copy=False))
+
+        memory_pos_embed = np.concatenate(pos_parts, axis=0).astype(np.float32, copy=False)
+        return memory_1, memory_pos_embed
+
+    def build_object_pointer_state(self, frame_index: int) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        if not self.use_object_pointers:
+            return None, None
+
+        entries: List[VideoMemoryFrame] = []
+        for frame in self.conditioning:
+            if frame.obj_ptr is not None:
+                entries.append(frame)
+
+        max_recent = max(0, self.max_pointer_slots - len(entries))
+        for frame in self.recent[:max_recent]:
+            if frame.obj_ptr is not None:
+                entries.append(frame)
+
+        if not entries:
+            return None, None
+
+        object_ptrs = np.concatenate([frame.obj_ptr for frame in entries if frame.obj_ptr is not None], axis=0)
+        offsets = np.asarray(
+            [max(0, frame_index - frame.frame_index) for frame in entries],
+            dtype=np.float32,
+        )
+        return object_ptrs.astype(np.float32, copy=False), offsets
+
+
 def warmup_video_runtime_sessions(
     sess_dec0: InferenceSession,
     sess_decn: InferenceSession,
@@ -657,47 +872,55 @@ def warmup_video_runtime_sessions(
     propagate_record = first_record if propagate_record is None else propagate_record
 
     for _ in range(repeats):
+        memory_bank = VideoMemoryBank.from_session(sess_mat)
         enc_embed0 = as_f32c(first_record["embed"])
         f0_0 = as_f32c(first_record["f0"])
         f1_0 = as_f32c(first_record["f1"])
 
-        _, mask_for_mem0, _ = run_decoder(sess_dec0, pts0, lbls0, enc_embed0, f0_0, f1_0)
+        obj_ptr0, mask_for_mem0, _ = run_decoder(sess_dec0, pts0, lbls0, enc_embed0, f0_0, f1_0)
         if mask_for_mem0 is None:
             raise RuntimeError("Warmup failed: decoder init did not return mask_for_mem")
 
-        mem_feats, mem_pos, _ = run_memory_encoder(
+        mem_feats, mem_pos, temporal_code = run_memory_encoder(
             sess_men,
             mask_for_mem=mask_for_mem0[:, 0:1],
             pix_feat=enc_embed0,
         )
-        mem_feats = as_f32c(mem_feats)
-        mem_pos = as_f32c(mem_pos)
+        memory_bank.set_conditioning(mem_feats, mem_pos, temporal_code, obj_ptr=obj_ptr0, frame_index=0)
 
         prop_embed = as_f32c(propagate_record["embed"])
+        prop_curr_feat = as_f32c(propagate_record.get("curr_feat", propagate_record["embed"]))
         prop_f0 = as_f32c(propagate_record["f0"])
         prop_f1 = as_f32c(propagate_record["f1"])
         prop_vis_pos = propagate_record.get("vis_pos")
         if prop_vis_pos is not None:
             prop_vis_pos = as_f32c(prop_vis_pos)
+        memory_1, memory_pos_embed = memory_bank.build_attention_state()
+        object_ptrs, obj_ptr_offsets = memory_bank.build_object_pointer_state(frame_index=1)
+        if memory_1 is None or memory_pos_embed is None:
+            raise RuntimeError("Warmup failed: no memory bank available for propagation")
 
         fused_embed = run_memory_attention(
             sess_mat,
-            current_vision_feat=prop_embed,
+            current_vision_feat=prop_curr_feat,
             current_vision_pos_embed=prop_vis_pos,
-            memory_1=mem_feats,
-            memory_pos_embed=mem_pos,
+            memory_1=memory_1,
+            memory_pos_embed=memory_pos_embed,
+            memory_0=object_ptrs,
+            obj_ptr_offsets=obj_ptr_offsets,
         )
         fused_embed = as_f32c(fused_embed)
 
-        _, mask_for_mem_n, _ = run_decoder(sess_decn, None, None, fused_embed, prop_f0, prop_f1)
+        obj_ptr_n, mask_for_mem_n, _ = run_decoder(sess_decn, None, None, fused_embed, prop_f0, prop_f1)
         if mask_for_mem_n is None:
             raise RuntimeError("Warmup failed: decoder propagate did not return mask_for_mem")
 
-        run_memory_encoder(
+        mem_feats_n, mem_pos_n, temporal_code_n = run_memory_encoder(
             sess_men,
             mask_for_mem=mask_for_mem_n[:, 0:1],
             pix_feat=fused_embed,
         )
+        memory_bank.append_recent(mem_feats_n, mem_pos_n, temporal_code_n, obj_ptr=obj_ptr_n, frame_index=1)
 
 
 def green_overlay(

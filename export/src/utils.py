@@ -222,7 +222,7 @@ def export_video_decoder_init(
             "high_res_feats_0",
             "high_res_feats_1",
         ],
-        output_names=["mask_for_mem", "pred_mask"],
+        output_names=["obj_ptr", "mask_for_mem", "pred_mask"],
     )
     _maybe_check(decoder_path, f"video init decoder (max_points={max_points})")
 
@@ -241,7 +241,7 @@ def export_video_decoder_propagate(model, outdir, name: str | None = None) -> No
         opset_version=OPSET,
         optimize=OPTIMIZE,
         input_names=["image_embed", "high_res_feats_0", "high_res_feats_1"],
-        output_names=["mask_for_mem", "pred_mask"],
+        output_names=["obj_ptr", "mask_for_mem", "pred_mask"],
     )
     _maybe_check(decoder_path, "prompt-free video propagate decoder")
 
@@ -330,6 +330,47 @@ def export_memory_attention_no_objptr(model, outdir, name: str | None = None) ->
         dynamic_shapes=dynamic_shapes,
     )
     _maybe_check(attn_path, "memory_attention without object pointers")
+
+
+def export_memory_attention_objptr(model, outdir, name: str | None = None) -> None:
+    os.makedirs(outdir, exist_ok=True)
+    attn_path = os.path.join(outdir, "memory_attention_objptr.onnx")
+
+    current_vision_feat = torch.randn(1, 256, 64, 64).float()
+    current_vision_pos = torch.randn(4096, 1, 256).float()
+    memory_0 = torch.randn(8, 256).float()
+    obj_ptr_offsets = torch.arange(1, 9, dtype=torch.float32)
+    memory_1 = torch.randn(7, 64, 64, 64).float()
+    memory_pos_embed = torch.randn(7 * 4096, 1, 64).float()
+
+    dynamic_shapes = {
+        "current_vision_feat": (1, 256, 64, 64),
+        "current_vision_pos_embed": (4096, 1, 256),
+        "memory_0": (Dim("num_object_ptrs"), 256),
+        "obj_ptr_offsets": (Dim("num_object_ptrs"),),
+        "memory_1": (Dim("num_mem_frames"), 64, 64, 64),
+        "memory_pos_embed": (Dim("buff_size"), 1, 64),
+    }
+
+    torch.onnx.export(
+        model,
+        (current_vision_feat, current_vision_pos, memory_0, obj_ptr_offsets, memory_1, memory_pos_embed),
+        attn_path,
+        export_params=True,
+        opset_version=OPSET,
+        optimize=OPTIMIZE,
+        input_names=[
+            "current_vision_feat",
+            "current_vision_pos_embed",
+            "memory_0",
+            "obj_ptr_offsets",
+            "memory_1",
+            "memory_pos_embed",
+        ],
+        output_names=["fused_feat"],
+        dynamic_shapes=dynamic_shapes,
+    )
+    _maybe_check(attn_path, "memory_attention with object pointers and offsets")
 
 
 def export_memory_attention_no_objptr_1frame(model, outdir, name: str | None = None) -> None:

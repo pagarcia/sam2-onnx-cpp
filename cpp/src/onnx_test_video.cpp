@@ -9,6 +9,7 @@
 #include "SAM2.h"
 #include "openFileDialog.h"
 #include "CVHelpers.h"
+#include "ArtifactResolver.h"
 
 /* ════════════════════════════════════════════════════════════════════════════ *
  *                          0.  COMMON HELPERS                                  *
@@ -235,8 +236,23 @@ int runOnnxTestVideo(int argc,char** argv)
     // for(auto&p:Ort::GetAvailableProviders()) if(p=="CUDAExecutionProvider") cuda=true;
     cuda = SAM2::hasCudaDriver();
     std::string device = cuda? "cuda:0":"cpu";
+    encPath = ArtifactResolver::preferQuantizedEncoderPath(encPath, device);
+    const auto runtimeSelection = ArtifactResolver::resolveVideoRuntimePaths(decPath, memAttnPath, memEncPath);
+    std::cout<<"[INFO] Resolved encoder    = "<<encPath<<"\n"
+             <<"       decoder init       = "<<runtimeSelection.decoderInitPath<<"\n"
+             <<"       decoder propagate  = "<<runtimeSelection.decoderPropagatePath<<"\n"
+             <<"       mem attention      = "<<runtimeSelection.memoryAttentionPath<<"\n"
+             <<"       mem encoder        = "<<runtimeSelection.memoryEncoderPath<<"\n"
+             <<"       video artifacts    = "<<runtimeSelection.mode<<"\n\n";
     SAM2 sam;
-    if(!sam.initializeVideo(encPath,decPath,memAttnPath,memEncPath,threads,device))
+    if(!sam.initializeVideo(
+            encPath,
+            runtimeSelection.decoderInitPath,
+            runtimeSelection.decoderPropagatePath,
+            runtimeSelection.memoryAttentionPath,
+            runtimeSelection.memoryEncoderPath,
+            threads,
+            device))
     { std::cerr<<"[ERROR] SAM2 init failed\n"; return 1;}
 
     /* ───── 5) open video & grab first frame ───── */

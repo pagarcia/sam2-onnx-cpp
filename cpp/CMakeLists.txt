@@ -81,7 +81,7 @@ elseif(APPLE)
   # Enable ARC for ObjC++
   set_source_files_properties(src/openFileDialog.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 else()
-  set(OPENFILEDIALOG_SRC "")
+  set(OPENFILEDIALOG_SRC src/openFileDialog.cpp)
 endif()
 
 add_executable(${TARGET_NAME}

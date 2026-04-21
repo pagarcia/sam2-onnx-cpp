@@ -2,6 +2,7 @@ import torch
 from torch import nn
 
 from sam2.modeling.sam2_base import SAM2Base
+from sam2.modeling.sam2_utils import get_1d_sine_pe
 
 
 class ImageEncoder(nn.Module):
@@ -76,23 +77,32 @@ class _DecoderBase(nn.Module):
         high_res_feats_0: torch.Tensor,
         high_res_feats_1: torch.Tensor,
         point_inputs: dict[str, torch.Tensor] | None,
+        single_token_obj_ptr: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         high_res_feats = [high_res_feats_0, high_res_feats_1]
-        (
-            _,
-            _,
-            _,
-            low_res_masks,
-            high_res_masks,
-            obj_ptr,
-            _,
-        ) = self.model._forward_sam_heads(
-            backbone_features=image_embed,
-            point_inputs=point_inputs,
-            mask_inputs=None,
-            high_res_features=high_res_feats,
-            multimask_output=True,
-        )
+        decoder = self.model.sam_mask_decoder
+        orig_multimask_obj_ptr = getattr(decoder, "use_multimask_token_for_obj_ptr", False)
+        if single_token_obj_ptr:
+            decoder.use_multimask_token_for_obj_ptr = False
+        try:
+            (
+                _,
+                _,
+                _,
+                low_res_masks,
+                high_res_masks,
+                obj_ptr,
+                _,
+            ) = self.model._forward_sam_heads(
+                backbone_features=image_embed,
+                point_inputs=point_inputs,
+                mask_inputs=None,
+                high_res_features=high_res_feats,
+                multimask_output=True,
+            )
+        finally:
+            if single_token_obj_ptr:
+                decoder.use_multimask_token_for_obj_ptr = orig_multimask_obj_ptr
 
         mask_for_mem = torch.sigmoid(high_res_masks)
         mask_for_mem = mask_for_mem * self.sigmoid_scale_for_mem_enc
@@ -139,15 +149,16 @@ class VideoDecoderInit(_DecoderBase):
         image_embed: torch.Tensor,
         high_res_feats_0: torch.Tensor,
         high_res_feats_1: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         point_inputs = self._point_inputs(point_coords, point_labels)
-        _, mask_for_mem, pred_mask = self._decode(
+        obj_ptr, mask_for_mem, pred_mask = self._decode(
             image_embed,
             high_res_feats_0,
             high_res_feats_1,
             point_inputs,
+            single_token_obj_ptr=True,
         )
-        return mask_for_mem, pred_mask
+        return obj_ptr, mask_for_mem, pred_mask
 
 
 class VideoDecoderPropagate(_DecoderBase):
@@ -157,14 +168,15 @@ class VideoDecoderPropagate(_DecoderBase):
         image_embed: torch.Tensor,
         high_res_feats_0: torch.Tensor,
         high_res_feats_1: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        _, mask_for_mem, pred_mask = self._decode(
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        obj_ptr, mask_for_mem, pred_mask = self._decode(
             image_embed,
             high_res_feats_0,
             high_res_feats_1,
             point_inputs=None,
+            single_token_obj_ptr=True,
         )
-        return mask_for_mem, pred_mask
+        return obj_ptr, mask_for_mem, pred_mask
 
 
 class _MemAttentionBase(nn.Module):
@@ -244,6 +256,56 @@ class MemAttentionNoObjPtr(_MemAttentionBase):
             memory=memory_1,
             memory_pos=memory_pos_embed,
             num_obj_ptr_tokens=0,
+        )
+
+        return fused_hwbc.permute(1, 2, 0).reshape(batch, channels, height, width)
+
+
+class MemAttentionObjPtr(_MemAttentionBase):
+    def __init__(self, sam_model: SAM2Base) -> None:
+        super().__init__(sam_model)
+        self.mem_dim = sam_model.mem_dim
+        self.max_obj_ptrs_in_encoder = getattr(sam_model, "max_obj_ptrs_in_encoder", 16)
+        self.add_tpos_enc_to_obj_ptrs = getattr(sam_model, "add_tpos_enc_to_obj_ptrs", True)
+        self.proj_tpos_enc_in_obj_ptrs = getattr(sam_model, "proj_tpos_enc_in_obj_ptrs", False)
+        self.obj_ptr_tpos_proj = sam_model.obj_ptr_tpos_proj
+
+    @torch.no_grad()
+    def forward(
+        self,
+        current_vision_feat: torch.Tensor,
+        current_vision_pos_embed: torch.Tensor,
+        memory_0: torch.Tensor,
+        obj_ptr_offsets: torch.Tensor,
+        memory_1: torch.Tensor,
+        memory_pos_embed: torch.Tensor,
+    ) -> torch.Tensor:
+        feat_hwbc, batch, channels, height, width = self._prepare_current_features(current_vision_feat)
+
+        num_obj_ptr = memory_0.shape[0]
+        if self.add_tpos_enc_to_obj_ptrs:
+            t_diff_max = max(1, self.max_obj_ptrs_in_encoder - 1)
+            tpos_dim = channels if self.proj_tpos_enc_in_obj_ptrs else self.mem_dim
+            obj_pos = get_1d_sine_pe(obj_ptr_offsets / t_diff_max, dim=tpos_dim)
+            obj_pos = self.obj_ptr_tpos_proj(obj_pos)
+            obj_pos = obj_pos.unsqueeze(1).expand(-1, batch, self.mem_dim)
+        else:
+            obj_pos = memory_0.new_zeros((num_obj_ptr, batch, self.mem_dim))
+
+        memory_0, num_obj_ptr_tokens = self._flatten_object_pointers(memory_0)
+        if self.mem_dim < channels:
+            obj_pos = obj_pos.repeat_interleave(channels // self.mem_dim, dim=0)
+
+        memory_1 = self._flatten_memory_bank(memory_1)
+        memory = torch.cat((memory_1, memory_0), dim=0)
+        memory_pos = torch.cat((memory_pos_embed, obj_pos), dim=0)
+
+        fused_hwbc = self.memory_attention(
+            curr=feat_hwbc,
+            curr_pos=current_vision_pos_embed,
+            memory=memory,
+            memory_pos=memory_pos,
+            num_obj_ptr_tokens=num_obj_ptr_tokens,
         )
 
         return fused_hwbc.permute(1, 2, 0).reshape(batch, channels, height, width)

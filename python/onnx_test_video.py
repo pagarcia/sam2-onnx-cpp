@@ -32,6 +32,7 @@ from onnx_test_utils import (
     run_memory_attention,
     run_memory_encoder,
     set_cv2_threads,
+    VideoMemoryBank,
     warmup_video_runtime_sessions,
 )
 
@@ -45,6 +46,7 @@ def interactive_select_points(first_bgr, sess_enc, sess_dec, enc_shape):
     tensor, (h_org, w_org) = prepare_image(first_bgr, (enc_h, enc_w))
     enc = run_encoder(sess_enc, tensor)
     embed = enc["image_embeddings"]
+    curr_feat = enc.get("current_vision_feat", embed)
     f0 = enc["high_res_features1"]
     f1 = enc["high_res_features2"]
 
@@ -94,7 +96,7 @@ def interactive_select_points(first_bgr, sess_enc, sess_dec, enc_shape):
     vis_pos = enc.get("vision_pos_embed")
     if vis_pos is not None:
         vis_pos = vis_pos.astype(np.float32, copy=False)
-    return points, labels, embed, f0, f1, vis_pos, (h_org, w_org)
+    return points, labels, embed, curr_feat, f0, f1, vis_pos, (h_org, w_org)
 
 
 def interactive_select_box(first_bgr, sess_enc, sess_dec, enc_shape):
@@ -102,6 +104,7 @@ def interactive_select_box(first_bgr, sess_enc, sess_dec, enc_shape):
     tensor, (h_org, w_org) = prepare_image(first_bgr, (enc_h, enc_w))
     enc = run_encoder(sess_enc, tensor)
     embed = enc["image_embeddings"]
+    curr_feat = enc.get("current_vision_feat", embed)
     f0 = enc["high_res_features1"]
     f1 = enc["high_res_features2"]
 
@@ -167,7 +170,7 @@ def interactive_select_box(first_bgr, sess_enc, sess_dec, enc_shape):
     vis_pos = enc.get("vision_pos_embed")
     if vis_pos is not None:
         vis_pos = vis_pos.astype(np.float32, copy=False)
-    return box, embed, f0, f1, vis_pos, (h_org, w_org)
+    return box, embed, curr_feat, f0, f1, vis_pos, (h_org, w_org)
 
 
 def process_video(args):
@@ -222,13 +225,18 @@ def process_video(args):
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     if args.prompt == "bounding_box":
-        box, embed0, f0_0, f1_0, vis_pos0, (h_org, w_org) = interactive_select_box(first_bgr, sess_enc, sess_dec0, (enc_h, enc_w))
+        box, embed0, curr_feat0, f0_0, f1_0, vis_pos0, (h_org, w_org) = interactive_select_box(
+            first_bgr, sess_enc, sess_dec0, (enc_h, enc_w)
+        )
         pts0, lbls0 = prepare_box_prompt(box, (h_org, w_org), (enc_h, enc_w)) if box else (None, None)
     else:
-        pts, lbls, embed0, f0_0, f1_0, vis_pos0, (h_org, w_org) = interactive_select_points(first_bgr, sess_enc, sess_dec0, (enc_h, enc_w))
+        pts, lbls, embed0, curr_feat0, f0_0, f1_0, vis_pos0, (h_org, w_org) = interactive_select_points(
+            first_bgr, sess_enc, sess_dec0, (enc_h, enc_w)
+        )
         pts0, lbls0 = prepare_points(pts, lbls, (h_org, w_org), (enc_h, enc_w))
 
     embed0 = embed0.astype(np.float32, copy=False)
+    curr_feat0 = curr_feat0.astype(np.float32, copy=False)
     f0_0 = f0_0.astype(np.float32, copy=False)
     f1_0 = f1_0.astype(np.float32, copy=False)
 
@@ -241,12 +249,14 @@ def process_video(args):
             sess_men=sess_men,
             first_record={
                 "embed": embed0,
+                "curr_feat": curr_feat0,
                 "f0": f0_0,
                 "f1": f1_0,
                 "vis_pos": vis_pos0,
             },
             propagate_record={
                 "embed": embed0,
+                "curr_feat": curr_feat0,
                 "f0": f0_0,
                 "f1": f1_0,
                 "vis_pos": vis_pos0,
@@ -256,8 +266,7 @@ def process_video(args):
         )
 
     fidx = 0
-    mem_feats = None
-    mem_pos = None
+    memory_bank = VideoMemoryBank.from_session(sess_mat)
 
     enc_input_name = sess_enc.get_inputs()[0].name
     enc_out_names = [o.name for o in sess_enc.get_outputs()]
@@ -269,7 +278,7 @@ def process_video(args):
 
         t_enc = time.time()
         if fidx == 0:
-            enc_embed, f0, f1 = embed0, f0_0, f1_0
+            enc_embed, enc_curr_feat, f0, f1 = embed0, curr_feat0, f0_0, f1_0
             vis_pos = None
             enc_ms = (time.time() - t_enc) * 1000
         else:
@@ -277,19 +286,29 @@ def process_video(args):
             enc_vals = sess_enc.run(None, {enc_input_name: tensor})
             enc = dict(zip(enc_out_names, enc_vals))
             enc_embed = enc["image_embeddings"].astype(np.float32, copy=False)
+            enc_curr_feat = enc.get("current_vision_feat", enc_embed).astype(np.float32, copy=False)
             f0 = enc["high_res_features1"].astype(np.float32, copy=False)
             f1 = enc["high_res_features2"].astype(np.float32, copy=False)
             vis_pos = enc["vision_pos_embed"].astype(np.float32, copy=False)
             enc_ms = (time.time() - t_enc) * 1000
 
-        if fidx > 0 and mem_feats is not None:
+        if fidx > 0:
+            memory_1, memory_pos_embed = memory_bank.build_attention_state()
+            object_ptrs, obj_ptr_offsets = memory_bank.build_object_pointer_state(frame_index=fidx)
+        else:
+            memory_1, memory_pos_embed = (None, None)
+            object_ptrs, obj_ptr_offsets = (None, None)
+
+        if fidx > 0 and memory_1 is not None and memory_pos_embed is not None:
             t_mat = time.time()
             fused_embed = run_memory_attention(
                 sess_mat,
-                current_vision_feat=enc_embed,
+                current_vision_feat=enc_curr_feat,
                 current_vision_pos_embed=vis_pos,
-                memory_1=mem_feats,
-                memory_pos_embed=mem_pos,
+                memory_1=memory_1,
+                memory_pos_embed=memory_pos_embed,
+                memory_0=object_ptrs,
+                obj_ptr_offsets=obj_ptr_offsets,
             ).astype(np.float32, copy=False)
             mat_ms = (time.time() - t_mat) * 1000
         else:
@@ -298,22 +317,24 @@ def process_video(args):
 
         t_dec = time.time()
         if fidx == 0:
-            _, mask_for_mem, pred_mask = run_decoder(sess_dec0, pts0, lbls0, fused_embed, f0, f1)
+            obj_ptr, mask_for_mem, pred_mask = run_decoder(sess_dec0, pts0, lbls0, fused_embed, f0, f1)
         else:
-            _, mask_for_mem, pred_mask = run_decoder(sess_decn, None, None, fused_embed, f0, f1)
+            obj_ptr, mask_for_mem, pred_mask = run_decoder(sess_decn, None, None, fused_embed, f0, f1)
         dec_ms = (time.time() - t_dec) * 1000
 
         if mask_for_mem is None or pred_mask is None:
             sys.exit("ERROR: Decoder did not return the expected outputs.")
 
         t_men = time.time()
-        mem_feats, mem_pos, _ = run_memory_encoder(
+        mem_feats, mem_pos, temporal_code = run_memory_encoder(
             sess_men,
             mask_for_mem=mask_for_mem[:, 0:1],
             pix_feat=fused_embed,
         )
-        mem_feats = mem_feats.astype(np.float32, copy=False)
-        mem_pos = mem_pos.astype(np.float32, copy=False)
+        if fidx == 0:
+            memory_bank.set_conditioning(mem_feats, mem_pos, temporal_code, obj_ptr=obj_ptr, frame_index=fidx)
+        else:
+            memory_bank.append_recent(mem_feats, mem_pos, temporal_code, obj_ptr=obj_ptr, frame_index=fidx)
         men_ms = (time.time() - t_men) * 1000
 
         logits = pred_mask[0, 0]

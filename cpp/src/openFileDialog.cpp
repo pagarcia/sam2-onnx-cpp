@@ -30,4 +30,14 @@ std::string openFileDialog(const wchar_t* filter,
         return std::string("");
     }
 }
+#else
+#include "openFileDialog.h"
+
+std::string openFileDialog(const wchar_t* filter,
+                           const wchar_t* title)
+{
+    (void)filter;
+    (void)title;
+    return std::string("");
+}
 #endif

@@ -2,6 +2,7 @@
 #include "openFileDialog.h"
 #include "SAM2.h"
 #include "CVHelpers.h"
+#include "ArtifactResolver.h"
 
 #include <opencv2/opencv.hpp>
 #include <onnxruntime_cxx_api.h>
@@ -234,6 +235,14 @@ int runOnnxTestImage(int argc,char** argv)
     cudaAvail = SAM2::hasCudaDriver();
     string device = cudaAvail ? "cuda:0" : "cpu";
     cout<<"[INFO] Initialising on "<<device<<"\n";
+
+    encoderPath = ArtifactResolver::preferQuantizedEncoderPath(encoderPath, device);
+    const auto decoderSelection = ArtifactResolver::resolveImageDecoderPath(
+        decoderPath,
+        mode==PromptMode::SEED_POINTS ? "seed_points" : "bounding_box");
+    decoderPath = decoderSelection.path;
+    cout<<"[INFO] Resolved encoder: "<<encoderPath<<"\n";
+    cout<<"[INFO] Image artifacts : "<<decoderSelection.mode<<" ("<<decoderPath<<")\n";
 
     AppState st;
     if(!st.sam.initialize(encoderPath,decoderPath,threads,device))

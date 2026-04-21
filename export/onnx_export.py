@@ -1,6 +1,8 @@
 import argparse
+import json
 import os
 import sys
+from pathlib import Path
 
 # Add the repository root (one level up from export) so Python can find the sam2 package.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -48,6 +50,82 @@ def _patch_repeat_interleave_for_export():
     _torch.Tensor.repeat_interleave = _ri_m
 
 
+def _artifact_entry(outdir: str, name: str) -> dict:
+    path = Path(outdir) / name
+    data_path = Path(f"{path}.data")
+    return {
+        "path": name,
+        "exists": path.exists(),
+        "has_external_data": data_path.exists(),
+    }
+
+
+def _write_manifest(
+    outdir: str,
+    model_size: str,
+    max_points: int,
+    skip_legacy: bool,
+    skip_specialized: bool,
+    experimental_image_points: bool,
+) -> None:
+    manifest = {
+        "model_size": model_size,
+        "max_points": max_points,
+        "legacy_enabled": not skip_legacy,
+        "specialized_enabled": not skip_specialized,
+        "experimental_image_points": experimental_image_points,
+        "artifacts": {
+            "image_encoder": _artifact_entry(outdir, "image_encoder.onnx"),
+            "image_decoder": _artifact_entry(outdir, "image_decoder.onnx"),
+            "image_decoder_box": _artifact_entry(outdir, "image_decoder_box.onnx"),
+            "image_decoder_points": _artifact_entry(outdir, "image_decoder_points.onnx"),
+            "video_decoder_init": _artifact_entry(outdir, "video_decoder_init.onnx"),
+            "video_decoder_propagate": _artifact_entry(outdir, "video_decoder_propagate.onnx"),
+            "memory_attention": _artifact_entry(outdir, "memory_attention.onnx"),
+            "memory_attention_objptr": _artifact_entry(outdir, "memory_attention_objptr.onnx"),
+            "memory_attention_no_objptr": _artifact_entry(outdir, "memory_attention_no_objptr.onnx"),
+            "memory_attention_no_objptr_1frame": _artifact_entry(outdir, "memory_attention_no_objptr_1frame.onnx"),
+            "memory_encoder": _artifact_entry(outdir, "memory_encoder.onnx"),
+            "memory_encoder_lite": _artifact_entry(outdir, "memory_encoder_lite.onnx"),
+        },
+        "recommended_runtime": {
+            "image_seed_points": "image_decoder.onnx",
+            "image_bounding_box": "image_decoder_box.onnx" if (Path(outdir) / "image_decoder_box.onnx").exists() else "image_decoder.onnx",
+            # The promptable init decoder stays on the legacy artifact because the
+            # fixed-slot specialized init decoder changes prompt semantics. The
+            # prompt-free propagation decoder is safe to specialize.
+            "video_decoder_init": "image_decoder.onnx",
+            "video_decoder_propagate": (
+                "video_decoder_propagate.onnx"
+                if (Path(outdir) / "video_decoder_propagate.onnx").exists()
+                else "image_decoder.onnx"
+            ),
+            "video_memory_attention": (
+                "memory_attention.onnx"
+                if (Path(outdir) / "memory_attention.onnx").exists()
+                else (
+                    "memory_attention_objptr.onnx"
+                    if (Path(outdir) / "memory_attention_objptr.onnx").exists()
+                    else (
+                        "memory_attention_no_objptr.onnx"
+                        if (Path(outdir) / "memory_attention_no_objptr.onnx").exists()
+                        else ""
+                    )
+                )
+            ),
+            "video_memory_encoder": (
+                "memory_encoder.onnx"
+                if (Path(outdir) / "memory_encoder.onnx").exists()
+                else "memory_encoder_lite.onnx"
+            ),
+        },
+    }
+
+    manifest_path = Path(outdir) / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    print(f"Wrote export manifest: {manifest_path}")
+
+
 def main(args):
     _patch_repeat_interleave_for_export()
     from sam2.build_sam import build_sam2
@@ -56,6 +134,7 @@ def main(args):
         ImageDecoderPredMask,
         ImageEncoder,
         MemAttention,
+        MemAttentionObjPtr,
         MemAttentionNoObjPtr,
         MemAttentionNoObjPtr1Frame,
         MemEncoder,
@@ -69,6 +148,7 @@ def main(args):
         export_image_decoder_points,
         export_image_encoder,
         export_memory_attention,
+        export_memory_attention_objptr,
         export_memory_attention_no_objptr,
         export_memory_attention_no_objptr_1frame,
         export_memory_encoder,
@@ -152,6 +232,9 @@ def main(args):
         video_propagate_decoder = VideoDecoderPropagate(sam2_model).eval().cpu()
         export_video_decoder_propagate(video_propagate_decoder, outdir, name=model_size)
 
+        mem_attn_objptr = MemAttentionObjPtr(sam2_model).eval().cpu()
+        export_memory_attention_objptr(mem_attn_objptr, outdir, name=model_size)
+
         mem_attn_no_objptr = MemAttentionNoObjPtr(sam2_model).eval().cpu()
         export_memory_attention_no_objptr(mem_attn_no_objptr, outdir, name=model_size)
 
@@ -160,6 +243,15 @@ def main(args):
 
         mem_enc_lite = MemEncoderLite(sam2_model).eval().cpu()
         export_memory_encoder_lite(mem_enc_lite, outdir, name=model_size)
+
+    _write_manifest(
+        outdir=outdir,
+        model_size=model_size,
+        max_points=args.max_points,
+        skip_legacy=args.skip_legacy,
+        skip_specialized=args.skip_specialized,
+        experimental_image_points=args.experimental_image_points,
+    )
 
 
 if __name__ == "__main__":
