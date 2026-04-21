@@ -183,6 +183,8 @@ bool SAM2::clearSessions()
         m_promptPointCoordsScratch.clear();
         m_promptPointLabelsScratch.clear();
         m_cachedEncoderOutputs.clear();
+        m_cachedEncoderHostCopy = CachedEncoderOutputs();
+        m_hasCachedEncoderHostCopy = false;
 
         m_hasDedicatedPropDecoder = false;
         m_cudaMemoryInfo = Ort::MemoryInfo{nullptr};

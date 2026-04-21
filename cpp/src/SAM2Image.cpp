@@ -72,13 +72,105 @@ bool SAM2::preprocessImage(const Image<float> &originalImage)
         const SAM2Size targetSize = getInputSize();
         EncoderOutputs encOut = getEncoderOutputsFromImage(originalImage, targetSize);
         m_cachedEncoderOutputs = std::move(encOut.outputs);
+        m_cachedEncoderHostCopy = CachedEncoderOutputs();
+        m_hasCachedEncoderHostCopy = false;
         return true;
     }
     catch (const std::exception &e) {
         m_cachedEncoderOutputs.clear();
+        m_cachedEncoderHostCopy = CachedEncoderOutputs();
+        m_hasCachedEncoderHostCopy = false;
         std::cerr << "[ERROR] preprocessImage => " << e.what() << '\n';
         return false;
     }
+}
+
+bool SAM2::captureCachedEncoderOutputs(CachedEncoderOutputs *outputs) const
+{
+    if (!outputs) {
+        return false;
+    }
+
+    const int requiredMaxIndex = std::max({
+        m_encoderEmbedIndex,
+        m_encoderCurrentVisionFeatIndex,
+        m_encoderHighRes0Index,
+        m_encoderHighRes1Index,
+    });
+    if (requiredMaxIndex < 0 || m_cachedEncoderOutputs.size() <= static_cast<size_t>(requiredMaxIndex)) {
+        return false;
+    }
+
+    auto exportTensor = [&](int index, CachedTensorData *target) -> bool {
+        if (!target || index < 0 || m_cachedEncoderOutputs.size() <= static_cast<size_t>(index)) {
+            return false;
+        }
+        extractTensorData(m_cachedEncoderOutputs[static_cast<size_t>(index)], target->values, target->shape);
+        return !target->values.empty() && !target->shape.empty();
+    };
+
+    CachedEncoderOutputs captured;
+    if (!exportTensor(m_encoderEmbedIndex, &captured.imageEmbed)
+        || !exportTensor(m_encoderCurrentVisionFeatIndex, &captured.currentVisionFeat)
+        || !exportTensor(m_encoderHighRes0Index, &captured.highRes0)
+        || !exportTensor(m_encoderHighRes1Index, &captured.highRes1)) {
+        return false;
+    }
+
+    if (m_encoderVisionPosIndex >= 0
+        && m_cachedEncoderOutputs.size() > static_cast<size_t>(m_encoderVisionPosIndex)
+        && exportTensor(m_encoderVisionPosIndex, &captured.visionPosEmbed)) {
+        captured.hasVisionPosEmbed = true;
+    }
+
+    *outputs = std::move(captured);
+    return true;
+}
+
+bool SAM2::restoreCachedEncoderOutputs(const CachedEncoderOutputs &outputs)
+{
+    m_cachedEncoderHostCopy = outputs;
+    m_hasCachedEncoderHostCopy = true;
+
+    auto importTensor = [&](const CachedTensorData &tensor, Ort::Value *target) -> bool {
+        if (!target || tensor.values.empty() || tensor.shape.empty()) {
+            return false;
+        }
+        if (computeElementCount(tensor.shape) != tensor.values.size()) {
+            return false;
+        }
+        *target = createTensor<float>(m_memoryInfo, tensor.values, tensor.shape);
+        return true;
+    };
+
+    const int requiredMaxIndex = std::max({
+        m_encoderEmbedIndex,
+        m_encoderCurrentVisionFeatIndex,
+        m_encoderHighRes0Index,
+        m_encoderHighRes1Index,
+        outputs.hasVisionPosEmbed ? m_encoderVisionPosIndex : -1,
+    });
+    if (requiredMaxIndex < 0) {
+        return false;
+    }
+
+    std::vector<Ort::Value> restored(static_cast<size_t>(requiredMaxIndex + 1));
+    if (!importTensor(m_cachedEncoderHostCopy.imageEmbed, &restored[static_cast<size_t>(m_encoderEmbedIndex)])
+        || !importTensor(m_cachedEncoderHostCopy.currentVisionFeat, &restored[static_cast<size_t>(m_encoderCurrentVisionFeatIndex)])
+        || !importTensor(m_cachedEncoderHostCopy.highRes0, &restored[static_cast<size_t>(m_encoderHighRes0Index)])
+        || !importTensor(m_cachedEncoderHostCopy.highRes1, &restored[static_cast<size_t>(m_encoderHighRes1Index)])) {
+        return false;
+    }
+
+    if (m_cachedEncoderHostCopy.hasVisionPosEmbed) {
+        if (m_encoderVisionPosIndex < 0
+            || !importTensor(m_cachedEncoderHostCopy.visionPosEmbed, &restored[static_cast<size_t>(m_encoderVisionPosIndex)])) {
+            return false;
+        }
+    }
+
+    m_cachedEncoderOutputs = std::move(restored);
+    return true;
 }
 
 Image<float> SAM2::inferSingleFrame(const SAM2Size &originalImageSize)

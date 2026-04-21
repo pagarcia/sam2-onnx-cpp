@@ -5,39 +5,22 @@
 #include <stdexcept>
 #include <vector>
 
-Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage,
-                                   const SAM2Prompts &prompts)
+Image<float> SAM2::inferMultiFrameWithEncoderOutputs(std::vector<Ort::Value> &encoderOutputs,
+                                                     const SAM2Size &originalSize,
+                                                     const SAM2Prompts &prompts,
+                                                     double encTimeMs)
 {
     if (!m_memAttentionSession || !m_memEncoderSession) {
         std::cerr << "[ERROR] Memory sessions not loaded => did you call initializeVideo()?\n";
         return Image<float>();
     }
 
-    const SAM2Size originalSize(originalImage.getWidth(), originalImage.getHeight());
-    const SAM2Size targetSize = getInputSize();
     Image<float> blankMask(originalSize.width, originalSize.height, 1);
-
-    double encTimeMs = 0.0;
     double attnTimeMs = 0.0;
     double decTimeMs = 0.0;
     double memEncTimeMs = 0.0;
 
-    EncoderOutputs encOutN;
-    {
-        const auto start = std::chrono::steady_clock::now();
-        try {
-            encOutN = getEncoderOutputsFromImage(originalImage, targetSize);
-        }
-        catch (const std::exception &e) {
-            std::cerr << "[ERROR] Encoder failed: " << e.what() << '\n';
-            return blankMask;
-        }
-        encTimeMs = std::chrono::duration<double, std::milli>(
-                        std::chrono::steady_clock::now() - start)
-                        .count();
-    }
-
-    if (encOutN.outputs.size() <= static_cast<size_t>(std::max({
+    if (encoderOutputs.size() <= static_cast<size_t>(std::max({
             m_encoderEmbedIndex,
             m_encoderCurrentVisionFeatIndex,
             m_encoderHighRes0Index,
@@ -49,14 +32,14 @@ Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage,
 
     setPrompts(prompts, originalSize);
 
-    Ort::Value &encEmbed = encOutN.outputs[static_cast<size_t>(m_encoderEmbedIndex)];
-    Ort::Value &currVisionFeat = encOutN.outputs[static_cast<size_t>(m_encoderCurrentVisionFeatIndex)];
-    Ort::Value &feat0 = encOutN.outputs[static_cast<size_t>(m_encoderHighRes0Index)];
-    Ort::Value &feat1 = encOutN.outputs[static_cast<size_t>(m_encoderHighRes1Index)];
+    Ort::Value &encEmbed = encoderOutputs[static_cast<size_t>(m_encoderEmbedIndex)];
+    Ort::Value &currVisionFeat = encoderOutputs[static_cast<size_t>(m_encoderCurrentVisionFeatIndex)];
+    Ort::Value &feat0 = encoderOutputs[static_cast<size_t>(m_encoderHighRes0Index)];
+    Ort::Value &feat1 = encoderOutputs[static_cast<size_t>(m_encoderHighRes1Index)];
     Ort::Value *visionPos = nullptr;
     if (m_encoderVisionPosIndex >= 0
-        && encOutN.outputs.size() > static_cast<size_t>(m_encoderVisionPosIndex)) {
-        visionPos = &encOutN.outputs[static_cast<size_t>(m_encoderVisionPosIndex)];
+        && encoderOutputs.size() > static_cast<size_t>(m_encoderVisionPosIndex)) {
+        visionPos = &encoderOutputs[static_cast<size_t>(m_encoderVisionPosIndex)];
     }
 
     try {
@@ -210,4 +193,41 @@ Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage,
         std::cerr << "[ERROR] inferMultiFrame => " << e.what() << '\n';
         return blankMask;
     }
+}
+
+Image<float> SAM2::inferMultiFrame(const Image<float> &originalImage,
+                                   const SAM2Prompts &prompts)
+{
+    const SAM2Size originalSize(originalImage.getWidth(), originalImage.getHeight());
+    const SAM2Size targetSize = getInputSize();
+    Image<float> blankMask(originalSize.width, originalSize.height, 1);
+
+    EncoderOutputs encOutN;
+    double encTimeMs = 0.0;
+    {
+        const auto start = std::chrono::steady_clock::now();
+        try {
+            encOutN = getEncoderOutputsFromImage(originalImage, targetSize);
+        }
+        catch (const std::exception &e) {
+            std::cerr << "[ERROR] Encoder failed: " << e.what() << '\n';
+            return blankMask;
+        }
+        encTimeMs = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - start)
+                        .count();
+    }
+
+    return inferMultiFrameWithEncoderOutputs(encOutN.outputs, originalSize, prompts, encTimeMs);
+}
+
+Image<float> SAM2::inferMultiFrameCached(const SAM2Size &originalImageSize,
+                                         const SAM2Prompts &prompts)
+{
+    if (m_cachedEncoderOutputs.empty()) {
+        std::cerr << "[ERROR] inferMultiFrameCached => encoder outputs are not cached.\n";
+        return Image<float>();
+    }
+
+    return inferMultiFrameWithEncoderOutputs(m_cachedEncoderOutputs, originalImageSize, prompts, 0.0);
 }

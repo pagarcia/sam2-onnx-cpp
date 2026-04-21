@@ -98,6 +98,19 @@ inline int preferredCpuThreads(int fallback)
     return std::max(1, fallback);
 }
 
+inline std::string preferredEncoderVariant()
+{
+    const char *value = std::getenv("SAM2_ORT_ENCODER_VARIANT");
+    if (!value) {
+        return "auto";
+    }
+    const std::string lowered = lowerCopy(value);
+    if (lowered == "int8" || lowered == "fp32" || lowered == "auto") {
+        return lowered;
+    }
+    return "auto";
+}
+
 inline bool useExperimentalVideoInitDecoder()
 {
     const char *value = std::getenv("SAM2_ORT_EXPERIMENTAL_VIDEO_INIT_DECODER");
@@ -125,12 +138,29 @@ inline bool isBasename(const std::string &path, const std::string &name)
 inline std::string preferQuantizedEncoderPath(const std::string &encoderPath,
                                               const std::string &device)
 {
-    if (device != "cpu" || !isBasename(encoderPath, "image_encoder.onnx")) {
+    if (!isBasename(encoderPath, "image_encoder.onnx")) {
         return encoderPath;
     }
 
     const std::filesystem::path current = candidatePath(encoderPath);
     const std::filesystem::path quantized = current.parent_path() / "image_encoder.int8.onnx";
+    const std::string variant = preferredEncoderVariant();
+
+    if (variant == "fp32") {
+        return encoderPath;
+    }
+
+    if (variant == "int8") {
+        if (pathExists(quantized)) {
+            return normalizePath(quantized);
+        }
+        return encoderPath;
+    }
+
+    if (device != "cpu") {
+        return encoderPath;
+    }
+
     if (pathExists(quantized)) {
         return normalizePath(quantized);
     }

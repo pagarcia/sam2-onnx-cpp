@@ -108,6 +108,20 @@ struct EncoderOutputs {
     std::vector<Ort::Value> outputs;
 };
 
+struct CachedTensorData {
+    std::vector<float> values;
+    std::vector<int64_t> shape;
+};
+
+struct CachedEncoderOutputs {
+    CachedTensorData imageEmbed;
+    CachedTensorData currentVisionFeat;
+    CachedTensorData highRes0;
+    CachedTensorData highRes1;
+    CachedTensorData visionPosEmbed;
+    bool hasVisionPosEmbed = false;
+};
+
 struct MemoryFrameState {
     std::vector<float> features;
     std::vector<int64_t> featuresShape;
@@ -166,6 +180,10 @@ public:
 
     bool preprocessImage(const Image<float> &originalImage);
     Image<float> inferSingleFrame(const SAM2Size &originalImageSize);
+    bool captureCachedEncoderOutputs(CachedEncoderOutputs *outputs) const;
+    bool restoreCachedEncoderOutputs(const CachedEncoderOutputs &outputs);
+    Image<float> inferMultiFrameCached(const SAM2Size &originalImageSize,
+                                       const SAM2Prompts &prompts);
 
     // For multi-frame usage:
     Image<float> inferMultiFrame(const Image<float> &originalImage,
@@ -210,6 +228,10 @@ public:
     std::variant<std::vector<Ort::Value>, std::string> runMemEncoderSession(const std::vector<Ort::Value> &inputTensors);
 
 private:
+    Image<float> inferMultiFrameWithEncoderOutputs(std::vector<Ort::Value> &encoderOutputs,
+                                                   const SAM2Size &originalSize,
+                                                   const SAM2Prompts &prompts,
+                                                   double encTimeMs);
     bool clearSessions();
     static std::vector<const char*> collectNodeNames(const std::vector<SAM2Node> &nodes);
     static std::vector<const char*> selectNodeNames(const std::vector<SAM2Node> &nodes,
@@ -329,6 +351,8 @@ private:
 
     // Cached encoder outputs for repeated prompting on a single frame
     std::vector<Ort::Value> m_cachedEncoderOutputs;
+    CachedEncoderOutputs m_cachedEncoderHostCopy;
+    bool m_hasCachedEncoderHostCopy = false;
 
     // Multi-frame memory
     bool m_hasMemory = false;

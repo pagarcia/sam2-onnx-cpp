@@ -33,6 +33,7 @@ struct AnchorEditorState
     SAM2Size originalSize;
 
     std::map<int, SAM2Prompts> anchors;
+    std::map<int, CachedEncoderOutputs> anchorEncoderCaches;
 
     std::vector<SAM2Point> currentPoints;
     std::vector<int> currentLabels;
@@ -198,15 +199,29 @@ void storeCurrentPromptToAnchor(AnchorEditorState* state)
 
     if (!hasPrompt) {
         state->anchors.erase(state->currentFrameIndex);
+        state->anchorEncoderCaches.erase(state->currentFrameIndex);
         return;
     }
 
     state->anchors[state->currentFrameIndex] = std::move(prompts);
+    CachedEncoderOutputs cachedOutputs;
+    if (state->sam->captureCachedEncoderOutputs(&cachedOutputs)) {
+        state->anchorEncoderCaches[state->currentFrameIndex] = std::move(cachedOutputs);
+    }
 }
 
 bool preprocessCurrentFrame(AnchorEditorState* state)
 {
     state->originalSize = SAM2Size(state->currentFrame.cols, state->currentFrame.rows);
+    const auto cacheIt = state->anchorEncoderCaches.find(state->currentFrameIndex);
+    if (cacheIt != state->anchorEncoderCaches.end()) {
+        if (state->sam->restoreCachedEncoderOutputs(cacheIt->second)) {
+            return true;
+        }
+        std::cerr << "[WARN] Failed to restore cached encoder outputs for frame "
+                  << state->currentFrameIndex << ", recomputing.\n";
+    }
+
     try {
         return state->sam->preprocessImage(CVHelpers::normalizeRGB(state->currentFrame, 255.0f));
     }
@@ -374,6 +389,7 @@ bool collectAnchorPrompts(SAM2* sam,
                           PromptMode mode,
                           int maxFrames,
                           std::map<int, SAM2Prompts>* anchorsOut,
+                          std::map<int, CachedEncoderOutputs>* anchorEncoderCachesOut,
                           int* totalFramesOut)
 {
     cv::VideoCapture capture(videoPath);
@@ -434,6 +450,9 @@ bool collectAnchorPrompts(SAM2* sam,
 
     cv::destroyAllWindows();
     *anchorsOut = std::move(state.anchors);
+    if (anchorEncoderCachesOut) {
+        *anchorEncoderCachesOut = std::move(state.anchorEncoderCaches);
+    }
     *totalFramesOut = totalFrames;
     return true;
 }
@@ -562,8 +581,16 @@ int runOnnxTestVideo(int argc, char** argv)
     }
 
     std::map<int, SAM2Prompts> anchors;
+    std::map<int, CachedEncoderOutputs> anchorEncoderCaches;
     int totalFrames = 0;
-    if (!collectAnchorPrompts(&sam, videoPath, mode, maxFrames, &anchors, &totalFrames)) {
+    if (!collectAnchorPrompts(
+            &sam,
+            videoPath,
+            mode,
+            maxFrames,
+            &anchors,
+            &anchorEncoderCaches,
+            &totalFrames)) {
         return 1;
     }
     if (anchors.empty()) {
@@ -632,7 +659,17 @@ int runOnnxTestVideo(int argc, char** argv)
         }
 
         const SAM2Prompts& prompts = anchorIt != anchors.end() ? anchorIt->second : emptyPrompts;
-        Image<float> mask = sam.inferMultiFrame(CVHelpers::normalizeRGB(frameBGR, 255.0f), prompts);
+        Image<float> mask;
+        if (anchorIt != anchors.end()) {
+            const auto cacheIt = anchorEncoderCaches.find(frameIndex);
+            if (cacheIt != anchorEncoderCaches.end() && sam.restoreCachedEncoderOutputs(cacheIt->second)) {
+                mask = sam.inferMultiFrameCached(SAM2Size(frameBGR.cols, frameBGR.rows), prompts);
+            } else {
+                mask = sam.inferMultiFrame(CVHelpers::normalizeRGB(frameBGR, 255.0f), prompts);
+            }
+        } else {
+            mask = sam.inferMultiFrame(CVHelpers::normalizeRGB(frameBGR, 255.0f), prompts);
+        }
 
         writer << overlayMask(
             frameBGR,

@@ -40,6 +40,7 @@ EXPERIMENTAL_1FRAME_ATTN = os.getenv("SAM2_ORT_EXPERIMENTAL_1FRAME_ATTN", "0").l
 EXPERIMENTAL_IMAGE_POINT_DECODER = os.getenv("SAM2_ORT_EXPERIMENTAL_IMAGE_POINT_DECODER", "0").lower() in ("1", "true", "yes")
 EXPERIMENTAL_VIDEO_INIT_DECODER = os.getenv("SAM2_ORT_EXPERIMENTAL_VIDEO_INIT_DECODER", "0").lower() in ("1", "true", "yes")
 VIDEO_AUTO_POLICY = os.getenv("SAM2_ORT_VIDEO_AUTO_POLICY", "speed" if CPU_LOW_COST_PROFILE else "correctness").lower()
+ENCODER_VARIANT = os.getenv("SAM2_ORT_ENCODER_VARIANT", "auto").lower()
 
 
 def _env_int(name: str, fallback: int, minimum: int = 0) -> int:
@@ -449,7 +450,11 @@ def prefer_quantized_encoder(
     elif ACCEL == "auto" and "CUDAExecutionProvider" in available:
         accel = True
 
-    if accel:
+    if ENCODER_VARIANT == "fp32":
+        order = [f"{base_name}.onnx", f"{base_name}.int8.onnx"]
+    elif ENCODER_VARIANT == "int8":
+        order = [f"{base_name}.int8.onnx", f"{base_name}.onnx"]
+    elif accel:
         order = [f"{base_name}.onnx", f"{base_name}.int8.onnx"]
     else:
         order = [f"{base_name}.int8.onnx", f"{base_name}.onnx"]
