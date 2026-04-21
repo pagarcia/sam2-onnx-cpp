@@ -38,6 +38,17 @@ EXPERIMENTAL_IMAGE_POINT_DECODER = os.getenv("SAM2_ORT_EXPERIMENTAL_IMAGE_POINT_
 EXPERIMENTAL_VIDEO_INIT_DECODER = os.getenv("SAM2_ORT_EXPERIMENTAL_VIDEO_INIT_DECODER", "0").lower() in ("1", "true", "yes")
 VIDEO_AUTO_POLICY = os.getenv("SAM2_ORT_VIDEO_AUTO_POLICY", "correctness").lower()
 
+
+def _env_int(name: str, fallback: int, minimum: int = 0) -> int:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return fallback
+    try:
+        return max(int(value), minimum)
+    except Exception:
+        return fallback
+
+
 _STATIC_SPECIALIZED_DECODERS = {
     "image_decoder_points.onnx",
     "image_decoder_box.onnx",
@@ -45,8 +56,16 @@ _STATIC_SPECIALIZED_DECODERS = {
     "video_decoder_propagate.onnx",
     "memory_attention_no_objptr_1frame.onnx",
 }
-DEFAULT_VIDEO_MEMORY_SLOTS = 7
-DEFAULT_VIDEO_OBJECT_POINTER_SLOTS = 16
+DEFAULT_VIDEO_MEMORY_SLOTS = _env_int(
+    "SAM2_ORT_VIDEO_MAX_MEMORY_FRAMES",
+    4 if VIDEO_AUTO_POLICY == "speed" else 7,
+    minimum=1,
+)
+DEFAULT_VIDEO_OBJECT_POINTER_SLOTS = _env_int(
+    "SAM2_ORT_VIDEO_MAX_OBJECT_POINTERS",
+    8 if VIDEO_AUTO_POLICY == "speed" else 16,
+    minimum=1,
+)
 
 
 def print_system_info() -> None:
@@ -747,7 +766,7 @@ class VideoMemoryBank:
     def _update_capacity(self, temporal_code: Optional[np.ndarray]) -> Optional[np.ndarray]:
         normalized = _normalize_temporal_code(temporal_code)
         if normalized is not None and normalized.shape[0] > 0:
-            self.max_slots = max(self.max_slots, int(normalized.shape[0]))
+            self.max_slots = min(self.max_slots, int(normalized.shape[0]))
         return normalized
 
     def _make_frame(

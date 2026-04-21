@@ -267,6 +267,10 @@ def process_video(args):
 
     fidx = 0
     memory_bank = VideoMemoryBank.from_session(sess_mat)
+    print(
+        f"[INFO] Video memory caps : frames={memory_bank.max_slots} "
+        f"object_ptrs={memory_bank.max_pointer_slots}"
+    )
 
     enc_input_name = sess_enc.get_inputs()[0].name
     enc_out_names = [o.name for o in sess_enc.get_outputs()]

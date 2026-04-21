@@ -38,6 +38,44 @@ std::string lowerCopy(const std::string &value)
     return lowered;
 }
 
+std::string getenvLowerCopy(const char* name, const std::string &fallback = "")
+{
+    const char* value = std::getenv(name);
+    if (!value) {
+        return fallback;
+    }
+    return lowerCopy(value);
+}
+
+size_t getenvSizeT(const char* name, size_t fallback, size_t minValue)
+{
+    const char* value = std::getenv(name);
+    if (!value || !*value) {
+        return fallback;
+    }
+
+    try {
+        const size_t parsed = static_cast<size_t>(std::stoull(value));
+        return std::max(parsed, minValue);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+size_t preferredVideoMemoryFrameLimit()
+{
+    const std::string autoPolicy = getenvLowerCopy("SAM2_ORT_VIDEO_AUTO_POLICY", "correctness");
+    const size_t fallback = autoPolicy == "speed" ? 4u : 7u;
+    return getenvSizeT("SAM2_ORT_VIDEO_MAX_MEMORY_FRAMES", fallback, 1u);
+}
+
+size_t preferredVideoObjectPointerLimit()
+{
+    const std::string autoPolicy = getenvLowerCopy("SAM2_ORT_VIDEO_AUTO_POLICY", "correctness");
+    const size_t fallback = autoPolicy == "speed" ? 8u : 16u;
+    return getenvSizeT("SAM2_ORT_VIDEO_MAX_OBJECT_POINTERS", fallback, 1u);
+}
+
 std::vector<SAM2Node> getSessionNodesInternal(Ort::Session* session, bool isInput, bool includeShapes)
 {
     std::vector<SAM2Node> nodes;
@@ -597,6 +635,9 @@ bool SAM2::initializeVideo(const std::string &encoderPath,
         return false;
     }
 
+    m_maxMemoryFrames = preferredVideoMemoryFrameLimit();
+    m_maxObjectPointers = preferredVideoObjectPointerLimit();
+
     if (!modelExists(memAttentionPath) || !modelExists(memEncoderPath)) {
         std::cerr << "[ERROR] Memory model files not found.\n";
         return false;
@@ -748,7 +789,7 @@ bool SAM2::initializeVideo(const std::string &encoderPath,
     if (temporalCodeIndex >= 0) {
         const auto &dims = m_memEncoderOutputNodes[static_cast<size_t>(temporalCodeIndex)].dim;
         if (!dims.empty() && dims[0] > 0) {
-            m_maxMemoryFrames = static_cast<size_t>(dims[0]);
+            m_maxMemoryFrames = std::min(m_maxMemoryFrames, static_cast<size_t>(dims[0]));
         }
     }
 
@@ -779,7 +820,7 @@ void SAM2::updateTemporalCode(const std::vector<Ort::Value> &memoryOutputs)
 
     extractTensorData(memoryOutputs[2], m_temporalCode, m_temporalCodeShape);
     if (!m_temporalCodeShape.empty() && m_temporalCodeShape[0] > 0) {
-        m_maxMemoryFrames = static_cast<size_t>(m_temporalCodeShape[0]);
+        m_maxMemoryFrames = std::min(m_maxMemoryFrames, static_cast<size_t>(m_temporalCodeShape[0]));
     }
 }
 

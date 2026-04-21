@@ -288,6 +288,10 @@ def _benchmark_video_variant(paths: dict[str, str], encoded_frames, prompt_input
 
     pts0, lbls0 = prompt_inputs
     memory_bank = VideoMemoryBank.from_session(sess_mat)
+    print(
+        f"[VIDEO] Memory caps frames={memory_bank.max_slots} "
+        f"object_ptrs={memory_bank.max_pointer_slots}"
+    )
     frame0 = {
         "attn_ms": [],
         "dec_ms": [],
