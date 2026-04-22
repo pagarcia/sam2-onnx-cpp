@@ -40,7 +40,15 @@ EXPERIMENTAL_1FRAME_ATTN = os.getenv("SAM2_ORT_EXPERIMENTAL_1FRAME_ATTN", "0").l
 EXPERIMENTAL_IMAGE_POINT_DECODER = os.getenv("SAM2_ORT_EXPERIMENTAL_IMAGE_POINT_DECODER", "0").lower() in ("1", "true", "yes")
 EXPERIMENTAL_VIDEO_INIT_DECODER = os.getenv("SAM2_ORT_EXPERIMENTAL_VIDEO_INIT_DECODER", "0").lower() in ("1", "true", "yes")
 VIDEO_AUTO_POLICY = os.getenv("SAM2_ORT_VIDEO_AUTO_POLICY", "speed" if CPU_LOW_COST_PROFILE else "correctness").lower()
-ENCODER_VARIANT = os.getenv("SAM2_ORT_ENCODER_VARIANT", "auto").lower()
+
+
+def _variant_env(name: str, default: str = "auto") -> str:
+    value = os.getenv(name, default).lower()
+    return value if value in ("auto", "fp32", "int8") else default
+
+
+ENCODER_VARIANT = _variant_env("SAM2_ORT_ENCODER_VARIANT")
+VIDEO_MODULE_VARIANT = _variant_env("SAM2_ORT_VIDEO_MODULE_VARIANT")
 
 
 def _env_int(name: str, fallback: int, minimum: int = 0) -> int:
@@ -153,6 +161,40 @@ def _create_session_with_fallback(
         print(f"Falling back to {list(fallback_providers)} and retrying.")
         print("****************************************")
         return InferenceSession(path, sess_options=so, providers=list(fallback_providers))
+
+
+def _runtime_uses_acceleration() -> bool:
+    available = ort.get_available_providers()
+
+    if CPU_LOW_COST_PROFILE or ACCEL == "cpu":
+        return False
+    if ACCEL == "cuda" and "CUDAExecutionProvider" in available:
+        return True
+    if ACCEL == "coreml" and "CoreMLExecutionProvider" in available:
+        return True
+    if ACCEL == "auto" and "CUDAExecutionProvider" in available:
+        return True
+    return False
+
+
+def _prefer_quantized_model_path(path: str | os.PathLike, variant: str = "auto") -> str:
+    current = Path(path)
+    quantized = current.with_name(current.stem + ".int8.onnx")
+
+    if variant == "fp32":
+        order = [current, quantized]
+    elif variant == "int8":
+        order = [quantized, current]
+    elif _runtime_uses_acceleration():
+        order = [current, quantized]
+    else:
+        order = [quantized, current]
+
+    for candidate in order:
+        if candidate.exists():
+            return str(candidate.resolve())
+
+    return str(current.resolve()) if current.exists() else str(current)
 
 
 def make_encoder_session(
@@ -397,6 +439,22 @@ def resolve_video_runtime_paths(
         specialized_attn_objptr.exists() or specialized_attn_1frame.exists() or specialized_attn_dynamic.exists()
     )
 
+    def _apply_video_module_variants(result: Dict[str, str]) -> Dict[str, str]:
+        adjusted = dict(result)
+        adjusted["decoder_propagate"] = _prefer_quantized_model_path(
+            adjusted["decoder_propagate"],
+            VIDEO_MODULE_VARIANT,
+        )
+        adjusted["memory_attention"] = _prefer_quantized_model_path(
+            adjusted["memory_attention"],
+            VIDEO_MODULE_VARIANT,
+        )
+        adjusted["memory_encoder"] = _prefer_quantized_model_path(
+            adjusted["memory_encoder"],
+            VIDEO_MODULE_VARIANT,
+        )
+        return adjusted
+
     def _preferred_optimized_result() -> Dict[str, str]:
         # Fixed-slot prompt init decoders change SAM prompt semantics and currently
         # poison the first-frame memory state, so the safe optimized path keeps the
@@ -411,60 +469,32 @@ def resolve_video_runtime_paths(
 
     if artifacts == "legacy":
         _ensure_paths_exist(legacy, "legacy")
-        return {"mode": "legacy", **{k: str(v.resolve()) for k, v in legacy.items()}}
+        return _apply_video_module_variants({"mode": "legacy", **{k: str(v.resolve()) for k, v in legacy.items()}})
 
     if artifacts == "specialized":
-        return _preferred_optimized_result()
+        return _apply_video_module_variants(_preferred_optimized_result())
 
     prefer_specialized = VIDEO_AUTO_POLICY in ("speed", "specialized")
 
     if prefer_specialized and (hybrid_available or specialized_available):
-        return _preferred_optimized_result()
+        return _apply_video_module_variants(_preferred_optimized_result())
     if legacy_available:
-        return {"mode": "legacy", **{k: str(v.resolve()) for k, v in legacy.items()}}
+        return _apply_video_module_variants({"mode": "legacy", **{k: str(v.resolve()) for k, v in legacy.items()}})
     if hybrid_available or specialized_available:
-        return _preferred_optimized_result()
+        return _apply_video_module_variants(_preferred_optimized_result())
 
     _ensure_paths_exist(legacy, "legacy")
-    return {"mode": "legacy", **{k: str(v.resolve()) for k, v in legacy.items()}}
+    return _apply_video_module_variants({"mode": "legacy", **{k: str(v.resolve()) for k, v in legacy.items()}})
 
 
 def prefer_quantized_encoder(
     ckpt_dir: str | os.PathLike,
     base_name: str = "image_encoder",
 ) -> Optional[str]:
-    """
-    Pick the best encoder artifact for the current acceleration mode.
-    - If accelerating (CUDA or explicit CoreML), prefer float .onnx over int8.
-    - If CPU, prefer int8 when available.
-    """
-    available = ort.get_available_providers()
-
-    accel = False
-    if CPU_LOW_COST_PROFILE:
-        accel = False
-    elif ACCEL == "cuda" and "CUDAExecutionProvider" in available:
-        accel = True
-    elif ACCEL == "coreml" and "CoreMLExecutionProvider" in available:
-        accel = True
-    elif ACCEL == "auto" and "CUDAExecutionProvider" in available:
-        accel = True
-
-    if ENCODER_VARIANT == "fp32":
-        order = [f"{base_name}.onnx", f"{base_name}.int8.onnx"]
-    elif ENCODER_VARIANT == "int8":
-        order = [f"{base_name}.int8.onnx", f"{base_name}.onnx"]
-    elif accel:
-        order = [f"{base_name}.onnx", f"{base_name}.int8.onnx"]
-    else:
-        order = [f"{base_name}.int8.onnx", f"{base_name}.onnx"]
-
-    ckpt_path = Path(ckpt_dir)
-    for fname in order:
-        candidate = ckpt_path / fname
-        if candidate.exists():
-            return str(candidate.resolve())
-    return None
+    candidate = Path(ckpt_dir) / f"{base_name}.onnx"
+    resolved = _prefer_quantized_model_path(candidate, ENCODER_VARIANT)
+    resolved_path = Path(resolved)
+    return str(resolved_path) if resolved_path.exists() else None
 
 
 def as_f32c(a: np.ndarray) -> np.ndarray:

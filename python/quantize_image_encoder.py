@@ -14,7 +14,6 @@ import numpy as np
 import onnx
 from onnx import numpy_helper
 import onnxruntime as ort
-from onnxruntime.quantization import QuantType, quantize_dynamic
 
 from onnx_test_utils import prepare_image, set_cv2_threads
 
@@ -166,7 +165,7 @@ def _find_attr_ints(node: onnx.NodeProto, name: str) -> list[int] | None:
     return None
 
 
-def _count_foldable_weight_transposes(model_path: Path) -> int:
+def _count_foldable_weight_transposes_in_matmul_rhs(model_path: Path) -> int:
     model = onnx.load_model(model_path, load_external_data=False)
     initializer_names = {initializer.name for initializer in model.graph.initializer}
     matmul_rhs = Counter(
@@ -213,7 +212,7 @@ def _prune_unused_initializers(model: onnx.ModelProto) -> int:
     return removed
 
 
-def _canonicalize_encoder_for_quantization(input_path: Path, output_path: Path) -> tuple[int, int]:
+def _canonicalize_model_for_quantization(input_path: Path, output_path: Path) -> tuple[int, int]:
     model = onnx.load_model(input_path)
     initializer_by_name = {initializer.name: initializer for initializer in model.graph.initializer}
     matmul_rhs = Counter(
@@ -286,6 +285,12 @@ def _print_graph_summary(prefix: str, counter: Counter[str]) -> None:
     )
 
 
+def _load_ort_quantization():
+    from onnxruntime.quantization import QuantType, quantize_dynamic
+
+    return QuantType, quantize_dynamic
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Quantize the SAM2 image encoder for CPU fallback.")
     parser.add_argument("--model_size", default="base_plus", choices=["base_plus", "large", "small", "tiny"])
@@ -319,9 +324,8 @@ def main() -> None:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    weight_type = QuantType.QInt8 if args.weight_type == "qint8" else QuantType.QUInt8
     canonicalize = not args.skip_canonicalize
-    foldable_weight_transposes = _count_foldable_weight_transposes(input_path) if canonicalize else 0
+    foldable_weight_transposes = _count_foldable_weight_transposes_in_matmul_rhs(input_path) if canonicalize else 0
 
     output_existed = output_path.exists()
     should_rebuild = args.force or not output_existed
@@ -348,7 +352,7 @@ def main() -> None:
 
         if canonicalize and foldable_weight_transposes > 0:
             print("[INFO] Canonicalizing encoder weights for quantization...")
-            folded_weight_transposes, pruned_initializers = _canonicalize_encoder_for_quantization(
+            folded_weight_transposes, pruned_initializers = _canonicalize_model_for_quantization(
                 input_path,
                 prepared_model_path,
             )
@@ -365,6 +369,8 @@ def main() -> None:
         print(f"[INFO] Reduce-range     : {args.reduce_range}")
         print(f"[INFO] Weight type      : {args.weight_type}")
 
+        QuantType, quantize_dynamic = _load_ort_quantization()
+        weight_type = QuantType.QInt8 if args.weight_type == "qint8" else QuantType.QUInt8
         start = time.perf_counter()
         quantize_dynamic(
             model_input=str(prepared_input_path),

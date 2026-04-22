@@ -558,7 +558,9 @@ int runOnnxTestVideo(int argc, char** argv)
     const auto runtimeSelection = ArtifactResolver::resolveVideoRuntimePaths(
         decoderPath,
         memAttnPath,
-        memEncPath);
+        memEncPath,
+        false,
+        device);
 
     std::cout << "[INFO] Resolved encoder    = " << encoderPath << "\n"
               << "       decoder init       = " << runtimeSelection.decoderInitPath << "\n"
