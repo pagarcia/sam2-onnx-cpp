@@ -7,6 +7,7 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 import argparse
+import contextlib
 import statistics
 import sys
 import tempfile
@@ -413,6 +414,18 @@ def _video_section_count(runs, section: str, key: str) -> int:
     return 0
 
 
+def _onnx_video_runtime_total_ms(runs) -> float:
+    return (
+        _median_of_video_runs(runs, "attn_ms")
+        + _median_of_video_runs(runs, "dec_ms")
+        + _median_of_video_runs(runs, "men_ms")
+    )
+
+
+def _onnx_video_total_frame_ms(enc_bench, runs) -> float:
+    return _mean_ms(enc_bench["times_ms"]) + _onnx_video_runtime_total_ms(runs)
+
+
 def _resolve_native_device(requested: str) -> str:
     import torch
 
@@ -476,6 +489,7 @@ def _benchmark_native_video(
     prompt_mode: str,
     frames: list[np.ndarray],
     native_device: str,
+    native_vos_optimized: bool,
 ):
     repo_root_str = str(repo_root)
     if repo_root_str not in sys.path:
@@ -483,8 +497,18 @@ def _benchmark_native_video(
     try:
         import torch
         from sam2.build_sam import build_sam2_video_predictor
+        import sam2.sam2_video_predictor as native_video_predictor_module
+        import sam2.utils.misc as sam2_misc_module
+        from tqdm import tqdm as real_tqdm
     except Exception as exc:
         raise RuntimeError(f"Native SAM2 import failed: {exc}") from exc
+
+    def _quiet_tqdm(iterable=None, *args, **kwargs):
+        kwargs["disable"] = True
+        return real_tqdm(iterable, *args, **kwargs)
+
+    native_video_predictor_module.tqdm = _quiet_tqdm
+    sam2_misc_module.tqdm = _quiet_tqdm
 
     variant = _SAM2_MODEL_VARIANTS[model_size]
     config_file = variant["config"]
@@ -502,59 +526,74 @@ def _benchmark_native_video(
             ckpt_path=str(checkpoint),
             device=actual_device,
             mode="eval",
-            vos_optimized=False,
+            vos_optimized=native_vos_optimized,
         )
 
-        t0 = time.perf_counter()
-        inference_state = predictor.init_state(
-            video_path=temp_dir.name,
-            offload_video_to_cpu=False,
-            offload_state_to_cpu=(actual_device == "cpu"),
+        inference_ctx = torch.inference_mode()
+        autocast_ctx = (
+            torch.autocast("cuda", dtype=torch.bfloat16)
+            if actual_device == "cuda"
+            else contextlib.nullcontext()
         )
-        init_ms = (time.perf_counter() - t0) * 1000.0
 
-        if prompt_spec["type"] == "box":
+        with inference_ctx, autocast_ctx:
             t0 = time.perf_counter()
-            predictor.add_new_points_or_box(
-                inference_state,
-                frame_idx=0,
-                obj_id=1,
-                box=np.array(prompt_spec["box"], dtype=np.float32),
+            inference_state = predictor.init_state(
+                video_path=temp_dir.name,
+                offload_video_to_cpu=False,
+                offload_state_to_cpu=(actual_device == "cpu"),
             )
-            prompt_ms = (time.perf_counter() - t0) * 1000.0
-        else:
-            t0 = time.perf_counter()
-            predictor.add_new_points_or_box(
-                inference_state,
-                frame_idx=0,
-                obj_id=1,
-                points=np.asarray(prompt_spec["points"], dtype=np.float32),
-                labels=np.asarray(prompt_spec["labels"], dtype=np.int32),
-            )
-            prompt_ms = (time.perf_counter() - t0) * 1000.0
+            init_ms = (time.perf_counter() - t0) * 1000.0
 
-        propagate_times = []
-        pred_masks = []
-        areas = []
-        iterator = predictor.propagate_in_video(inference_state)
-        while True:
-            t0 = time.perf_counter()
-            try:
-                _, _, mask_logits = next(iterator)
-            except StopIteration:
-                break
-            propagate_times.append((time.perf_counter() - t0) * 1000.0)
-            mask = np.squeeze((mask_logits[0] > 0).to(torch.uint8).cpu().numpy())
-            pred_masks.append(mask.astype(bool, copy=False))
-            areas.append(int(mask.sum()))
+            if prompt_spec["type"] == "box":
+                t0 = time.perf_counter()
+                predictor.add_new_points_or_box(
+                    inference_state,
+                    frame_idx=0,
+                    obj_id=1,
+                    box=np.array(prompt_spec["box"], dtype=np.float32),
+                )
+                prompt_ms = (time.perf_counter() - t0) * 1000.0
+            else:
+                t0 = time.perf_counter()
+                predictor.add_new_points_or_box(
+                    inference_state,
+                    frame_idx=0,
+                    obj_id=1,
+                    points=np.asarray(prompt_spec["points"], dtype=np.float32),
+                    labels=np.asarray(prompt_spec["labels"], dtype=np.int32),
+                )
+                prompt_ms = (time.perf_counter() - t0) * 1000.0
 
+            propagate_times = []
+            pred_masks = []
+            areas = []
+            iterator = predictor.propagate_in_video(inference_state)
+            while True:
+                t0 = time.perf_counter()
+                try:
+                    _, _, mask_logits = next(iterator)
+                except StopIteration:
+                    break
+                propagate_times.append((time.perf_counter() - t0) * 1000.0)
+                mask = np.squeeze((mask_logits[0] > 0).to(torch.uint8).cpu().numpy())
+                pred_masks.append(mask.astype(bool, copy=False))
+                areas.append(int(mask.sum()))
+
+        total_video_ms = init_ms + prompt_ms + sum(propagate_times)
+        frame_count = len(pred_masks)
+        total_frame_ms = total_video_ms / max(frame_count, 1)
         return {
             "device": actual_device,
+            "vos_optimized": native_vos_optimized,
             "init_ms": init_ms,
             "prompt_ms": prompt_ms,
             "propagate_ms": propagate_times,
             "pred_masks": pred_masks,
             "areas": areas,
+            "frame_count": frame_count,
+            "total_video_ms": total_video_ms,
+            "total_frame_ms": total_frame_ms,
         }
     finally:
         temp_dir.cleanup()
@@ -734,6 +773,7 @@ def run_video_benchmark(args, ckpt_dir: Path, enc_path: str):
                 prompt_mode=args.prompt,
                 frames=frames,
                 native_device=args.native_device,
+                native_vos_optimized=args.native_vos_optimized,
             )
         except Exception as exc:
             print(f"[VIDEO] Native SAM2 comparison skipped: {exc}")
@@ -741,17 +781,36 @@ def run_video_benchmark(args, ckpt_dir: Path, enc_path: str):
         native_avg = _mean_ms(native["propagate_ms"])
         native_zero = sum(1 for area in native["areas"] if area == 0)
         print("[VIDEO] Native SAM2")
-        print(f"  device={native['device']} init={native['init_ms']:.2f} ms prompt={native['prompt_ms']:.2f} ms")
+        print(
+            f"  device={native['device']} vos_optimized={native['vos_optimized']}"
+            f" init={native['init_ms']:.2f} ms prompt={native['prompt_ms']:.2f} ms"
+        )
         print(
             f"  propagate_avg={native_avg:.2f} ms frames={len(native['propagate_ms'])}"
             f" zero_frames={native_zero}"
+        )
+        print(
+            f"  total_video={native['total_video_ms']:.2f} ms"
+            f" total_per_frame={native['total_frame_ms']:.2f} ms"
         )
 
         for mode in ("legacy", "specialized"):
             if mode not in results or not results[mode]:
                 continue
             delta = _compare_native_masks(results[mode][0]["pred_masks"], native["pred_masks"])
+            onnx_total_frame = _onnx_video_total_frame_ms(enc_bench, results[mode])
+            onnx_runtime = _onnx_video_runtime_total_ms(results[mode])
+            native_speedup = native["total_frame_ms"] / max(onnx_total_frame, 1e-9)
             print(f"[VIDEO] {labels.get(mode, _runtime_label(mode)).capitalize()} vs native")
+            print(
+                f"  onnx_total_per_frame={onnx_total_frame:.2f} ms"
+                f" native_total_per_frame={native['total_frame_ms']:.2f} ms"
+                f" onnx_speedup_over_native={native_speedup:.2f}x"
+            )
+            print(
+                f"  onnx_runtime_no_encoder={onnx_runtime:.2f} ms"
+                f" native_propagate_avg={native_avg:.2f} ms"
+            )
             print(
                 f"  binary_iou={delta['binary_iou']:.6f}"
                 f" area_ratio={delta['area_ratio']:.6f}"
@@ -772,6 +831,7 @@ def main():
     ap.add_argument("--repeat", type=int, default=10, help="Measured runs for image decoder benchmark")
     ap.add_argument("--native_compare", action="store_true", help="Also benchmark native SAM2 video propagation on the same prompt and frames")
     ap.add_argument("--native_device", default="auto", choices=["auto", "cpu", "cuda"], help="Device for --native_compare")
+    ap.add_argument("--native_vos_optimized", action="store_true", help="Enable Meta SAM2 predictor vos_optimized=True during --native_compare")
     args = ap.parse_args()
 
     if not args.image and not args.video:
