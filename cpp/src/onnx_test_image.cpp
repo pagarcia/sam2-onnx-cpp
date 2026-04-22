@@ -173,7 +173,7 @@ int runOnnxTestImage(int argc,char** argv)
     string decoderPath = "image_decoder.onnx";
     string imagePath;                     // empty → file dialog
     int    threads   = (int)thread::hardware_concurrency(); if(threads<=0) threads=4;
-    threads = ArtifactResolver::preferredCpuThreads(threads);
+    bool   threadsExplicit = false;
     PromptMode mode  = PromptMode::SEED_POINTS;             // default
 
     for(int i=2;i<argc;++i)   // argv[1] is "--onnx_test_image"
@@ -182,7 +182,7 @@ int runOnnxTestImage(int argc,char** argv)
         if((a=="--encoder") && i+1<argc)       encoderPath = argv[++i];
         else if((a=="--decoder") && i+1<argc)  decoderPath = argv[++i];
         else if((a=="--image")   && i+1<argc)  imagePath   = argv[++i];
-        else if((a=="--threads") && i+1<argc)  threads     = stoi(argv[++i]);
+        else if((a=="--threads") && i+1<argc)  { threads = stoi(argv[++i]); threadsExplicit = true; }
         else if((a=="--prompt")  && i+1<argc)
         {
             string s = argv[++i];
@@ -219,14 +219,6 @@ int runOnnxTestImage(int argc,char** argv)
         imagePath = chosen;
     }
 
-    const string runtimeProfile = ArtifactResolver::preferredRuntimeProfile();
-    cout<<"[INFO] runtime_profile="<<(runtimeProfile.empty() ? "default" : runtimeProfile)<<"\n"
-        <<"       encoder="<<encoderPath<<"\n"
-        <<"       decoder="<<decoderPath<<"\n"
-        <<"       image  ="<<imagePath<<"\n"
-        <<"       prompt ="<<(mode==PromptMode::SEED_POINTS?"seed_points":"bounding_box")<<"\n"
-        <<"       threads="<<threads<<"\n\n";
-
     /* ---------------  read image  --------------- */
     cv::Mat imgBGR = cv::imread(imagePath);
     if(imgBGR.empty()){ cerr<<"[ERROR] could not load "<<imagePath<<"\n"; return 1; }
@@ -240,6 +232,18 @@ int runOnnxTestImage(int argc,char** argv)
         cudaAvail = SAM2::hasCudaDriver();
     }
     string device = (forceCpu || !cudaAvail) ? "cpu" : "cuda:0";
+    if (!threadsExplicit) {
+        threads = ArtifactResolver::preferredRuntimeThreads(threads, device);
+    }
+
+    const string runtimeProfile = ArtifactResolver::preferredRuntimeProfile();
+    cout<<"[INFO] runtime_profile="<<(runtimeProfile.empty() ? "default" : runtimeProfile)<<"\n"
+        <<"       encoder="<<encoderPath<<"\n"
+        <<"       decoder="<<decoderPath<<"\n"
+        <<"       image  ="<<imagePath<<"\n"
+        <<"       prompt ="<<(mode==PromptMode::SEED_POINTS?"seed_points":"bounding_box")<<"\n"
+        <<"       threads="<<threads<<"\n\n";
+
     cout<<"[INFO] Initialising on "<<device<<"\n";
 
     encoderPath = ArtifactResolver::preferQuantizedEncoderPath(encoderPath, device);

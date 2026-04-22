@@ -54,26 +54,22 @@ size_t getenvSizeT(const char* name, size_t fallback, size_t minValue)
     }
 }
 
-size_t preferredVideoMemoryFrameLimit()
+size_t preferredVideoMemoryFrameLimit(const std::string &device)
 {
-    if (ArtifactResolver::isLowCostCpuProfile()) {
+    if (ArtifactResolver::isLowCostCpuProfile() || device == "cpu") {
         return getenvSizeT("SAM2_ORT_VIDEO_MAX_MEMORY_FRAMES", 3u, 1u);
     }
 
-    const std::string autoPolicy = ArtifactResolver::preferredVideoAutoPolicy();
-    const size_t fallback = autoPolicy == "speed" ? 4u : 7u;
-    return getenvSizeT("SAM2_ORT_VIDEO_MAX_MEMORY_FRAMES", fallback, 1u);
+    return getenvSizeT("SAM2_ORT_VIDEO_MAX_MEMORY_FRAMES", 4u, 1u);
 }
 
-size_t preferredVideoObjectPointerLimit()
+size_t preferredVideoObjectPointerLimit(const std::string &device)
 {
-    if (ArtifactResolver::isLowCostCpuProfile()) {
+    if (ArtifactResolver::isLowCostCpuProfile() || device == "cpu") {
         return getenvSizeT("SAM2_ORT_VIDEO_MAX_OBJECT_POINTERS", 4u, 1u);
     }
 
-    const std::string autoPolicy = ArtifactResolver::preferredVideoAutoPolicy();
-    const size_t fallback = autoPolicy == "speed" ? 8u : 16u;
-    return getenvSizeT("SAM2_ORT_VIDEO_MAX_OBJECT_POINTERS", fallback, 1u);
+    return getenvSizeT("SAM2_ORT_VIDEO_MAX_OBJECT_POINTERS", 8u, 1u);
 }
 
 std::vector<SAM2Node> getSessionNodesInternal(Ort::Session* session, bool isInput, bool includeShapes)
@@ -378,10 +374,15 @@ bool SAM2::isStaticOptimizableModel(const std::string &modelPath)
 {
     const std::string lowered = lowerCopy(modelPath);
     return lowered.find("image_decoder_points.onnx") != std::string::npos
+        || lowered.find("image_decoder_points.int8.onnx") != std::string::npos
         || lowered.find("image_decoder_box.onnx") != std::string::npos
+        || lowered.find("image_decoder_box.int8.onnx") != std::string::npos
         || lowered.find("video_decoder_init.onnx") != std::string::npos
+        || lowered.find("video_decoder_init.int8.onnx") != std::string::npos
         || lowered.find("video_decoder_propagate.onnx") != std::string::npos
-        || lowered.find("memory_attention_no_objptr_1frame.onnx") != std::string::npos;
+        || lowered.find("video_decoder_propagate.int8.onnx") != std::string::npos
+        || lowered.find("memory_attention_no_objptr_1frame.onnx") != std::string::npos
+        || lowered.find("memory_attention_no_objptr_1frame.int8.onnx") != std::string::npos;
 }
 
 bool SAM2::shouldUseCpuArena(const std::string &device)
@@ -637,8 +638,8 @@ bool SAM2::initializeVideo(const std::string &encoderPath,
         return false;
     }
 
-    m_maxMemoryFrames = preferredVideoMemoryFrameLimit();
-    m_maxObjectPointers = preferredVideoObjectPointerLimit();
+    m_maxMemoryFrames = preferredVideoMemoryFrameLimit(device);
+    m_maxObjectPointers = preferredVideoObjectPointerLimit(device);
 
     if (!modelExists(memAttentionPath) || !modelExists(memEncoderPath)) {
         std::cerr << "[ERROR] Memory model files not found.\n";

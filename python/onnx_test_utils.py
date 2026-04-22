@@ -39,7 +39,6 @@ STATIC_DECODER_OPT = os.getenv("SAM2_ORT_STATIC_DECODER_OPT", "1").lower() in ("
 EXPERIMENTAL_1FRAME_ATTN = os.getenv("SAM2_ORT_EXPERIMENTAL_1FRAME_ATTN", "0").lower() in ("1", "true", "yes")
 EXPERIMENTAL_IMAGE_POINT_DECODER = os.getenv("SAM2_ORT_EXPERIMENTAL_IMAGE_POINT_DECODER", "0").lower() in ("1", "true", "yes")
 EXPERIMENTAL_VIDEO_INIT_DECODER = os.getenv("SAM2_ORT_EXPERIMENTAL_VIDEO_INIT_DECODER", "0").lower() in ("1", "true", "yes")
-VIDEO_AUTO_POLICY = os.getenv("SAM2_ORT_VIDEO_AUTO_POLICY", "speed" if CPU_LOW_COST_PROFILE else "correctness").lower()
 
 
 def _variant_env(name: str, default: str = "auto") -> str:
@@ -61,26 +60,60 @@ def _env_int(name: str, fallback: int, minimum: int = 0) -> int:
         return fallback
 
 
+def _runtime_uses_acceleration() -> bool:
+    available = ort.get_available_providers()
+
+    if CPU_LOW_COST_PROFILE or ACCEL == "cpu":
+        return False
+    if ACCEL == "cuda" and "CUDAExecutionProvider" in available:
+        return True
+    if ACCEL == "coreml" and "CoreMLExecutionProvider" in available:
+        return True
+    if ACCEL == "auto" and "CUDAExecutionProvider" in available:
+        return True
+    return False
+
+
+def _default_video_memory_slots() -> int:
+    return 4 if _runtime_uses_acceleration() else 3
+
+
+def _default_video_object_pointer_slots() -> int:
+    return 8 if _runtime_uses_acceleration() else 4
+
+
+def _default_cpu_threads() -> int:
+    cpu_count = max(1, os.cpu_count() or 4)
+    if CPU_LOW_COST_PROFILE or not _runtime_uses_acceleration():
+        return min(4, cpu_count)
+    return max(1, cpu_count - 1)
+
+
 _STATIC_SPECIALIZED_DECODERS = {
     "image_decoder_points.onnx",
+    "image_decoder_points.int8.onnx",
     "image_decoder_box.onnx",
+    "image_decoder_box.int8.onnx",
     "video_decoder_init.onnx",
+    "video_decoder_init.int8.onnx",
     "video_decoder_propagate.onnx",
+    "video_decoder_propagate.int8.onnx",
     "memory_attention_no_objptr_1frame.onnx",
+    "memory_attention_no_objptr_1frame.int8.onnx",
 }
 DEFAULT_VIDEO_MEMORY_SLOTS = _env_int(
     "SAM2_ORT_VIDEO_MAX_MEMORY_FRAMES",
-    3 if CPU_LOW_COST_PROFILE else (4 if VIDEO_AUTO_POLICY == "speed" else 7),
+    _default_video_memory_slots(),
     minimum=1,
 )
 DEFAULT_VIDEO_OBJECT_POINTER_SLOTS = _env_int(
     "SAM2_ORT_VIDEO_MAX_OBJECT_POINTERS",
-    4 if CPU_LOW_COST_PROFILE else (8 if VIDEO_AUTO_POLICY == "speed" else 16),
+    _default_video_object_pointer_slots(),
     minimum=1,
 )
 DEFAULT_CPU_THREADS = _env_int(
     "SAM2_ORT_CPU_THREADS",
-    min(4, max(1, os.cpu_count() or 4)) if CPU_LOW_COST_PROFILE else max(1, (os.cpu_count() or 8) - 1),
+    _default_cpu_threads(),
     minimum=1,
 )
 
@@ -161,20 +194,6 @@ def _create_session_with_fallback(
         print(f"Falling back to {list(fallback_providers)} and retrying.")
         print("****************************************")
         return InferenceSession(path, sess_options=so, providers=list(fallback_providers))
-
-
-def _runtime_uses_acceleration() -> bool:
-    available = ort.get_available_providers()
-
-    if CPU_LOW_COST_PROFILE or ACCEL == "cpu":
-        return False
-    if ACCEL == "cuda" and "CUDAExecutionProvider" in available:
-        return True
-    if ACCEL == "coreml" and "CoreMLExecutionProvider" in available:
-        return True
-    if ACCEL == "auto" and "CUDAExecutionProvider" in available:
-        return True
-    return False
 
 
 def _prefer_quantized_model_path(path: str | os.PathLike, variant: str = "auto") -> str:
@@ -474,9 +493,9 @@ def resolve_video_runtime_paths(
     if artifacts == "specialized":
         return _apply_video_module_variants(_preferred_optimized_result())
 
-    prefer_specialized = VIDEO_AUTO_POLICY in ("speed", "specialized")
+    prefer_optimized = _runtime_uses_acceleration()
 
-    if prefer_specialized and (hybrid_available or specialized_available):
+    if prefer_optimized and (hybrid_available or specialized_available):
         return _apply_video_module_variants(_preferred_optimized_result())
     if legacy_available:
         return _apply_video_module_variants({"mode": "legacy", **{k: str(v.resolve()) for k, v in legacy.items()}})

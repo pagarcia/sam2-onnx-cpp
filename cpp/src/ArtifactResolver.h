@@ -55,15 +55,6 @@ inline std::string normalizePath(const std::filesystem::path &path)
 inline std::string preferredRuntimeProfile();
 inline bool isLowCostCpuProfile();
 
-inline std::string preferredVideoAutoPolicy()
-{
-    const char *value = std::getenv("SAM2_ORT_VIDEO_AUTO_POLICY");
-    if (!value) {
-        return isLowCostCpuProfile() ? "speed" : "correctness";
-    }
-    return lowerCopy(value);
-}
-
 inline std::string preferredRuntimeProfile()
 {
     const char *value = std::getenv("SAM2_ORT_RUNTIME_PROFILE");
@@ -82,7 +73,7 @@ inline bool isLowCostCpuProfile()
         || profile == "low-cost-cpu";
 }
 
-inline int preferredCpuThreads(int fallback)
+inline int preferredRuntimeThreads(int fallback, const std::string &device)
 {
     const char *value = std::getenv("SAM2_ORT_CPU_THREADS");
     if (value && *value) {
@@ -92,7 +83,7 @@ inline int preferredCpuThreads(int fallback)
         }
     }
 
-    if (isLowCostCpuProfile()) {
+    if (isLowCostCpuProfile() || device == "cpu") {
         return std::max(1, std::min(fallback, 4));
     }
     return std::max(1, fallback);
@@ -318,9 +309,7 @@ inline VideoRuntimeSelection resolveVideoRuntimePaths(const std::string &decoder
     const bool hybridAvailable =
         legacyAvailable
         && pathExists(decoderProp);
-    const bool preferSpecialized = preferredVideoAutoPolicy() == "speed"
-        || preferredVideoAutoPolicy() == "specialized";
-
+    const bool preferOptimized = device != "cpu";
     const auto hybridResult = [&]() -> VideoRuntimeSelection {
         return applyVideoModuleVariants({
             normalizePath(candidatePath(decoderPath)),
@@ -371,7 +360,7 @@ inline VideoRuntimeSelection resolveVideoRuntimePaths(const std::string &decoder
         return hybridResult();
     };
 
-    if (preferSpecialized && (hybridAvailable || specializedAvailable)) {
+    if (preferOptimized && (hybridAvailable || specializedAvailable)) {
         return optimizedResult();
     }
 

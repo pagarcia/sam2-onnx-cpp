@@ -820,7 +820,7 @@ def run_video_benchmark(args, ckpt_dir: Path, enc_path: str):
 
 def main():
     ap = argparse.ArgumentParser(description="Benchmark legacy vs optimized ONNX runtime variants")
-    ap.add_argument("--model_size", default="tiny", choices=["base_plus", "large", "small", "tiny"])
+    ap.add_argument("--model_size", default="base_plus", choices=["base_plus", "large", "small", "tiny"])
     ap.add_argument("--prompt", default="seed_points", choices=["seed_points", "bounding_box"])
     ap.add_argument("--image", default="", help="Optional image path for decoder benchmarking")
     ap.add_argument("--video", default="", help="Optional video path for runtime benchmarking")

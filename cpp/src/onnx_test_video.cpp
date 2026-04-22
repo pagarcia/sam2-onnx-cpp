@@ -492,7 +492,7 @@ int runOnnxTestVideo(int argc, char** argv)
     if (threads <= 0) {
         threads = 4;
     }
-    threads = ArtifactResolver::preferredCpuThreads(threads);
+    bool threadsExplicit = false;
 
     int maxFrames = 0;
     PromptMode mode = PromptMode::SEED_POINTS;
@@ -511,6 +511,7 @@ int runOnnxTestVideo(int argc, char** argv)
             videoPath = argv[++i];
         } else if (arg == "--threads" && i + 1 < argc) {
             threads = std::stoi(argv[++i]);
+            threadsExplicit = true;
         } else if (arg == "--max_frames" && i + 1 < argc) {
             maxFrames = std::stoi(argv[++i]);
         } else if (arg == "--prompt" && i + 1 < argc) {
@@ -539,6 +540,13 @@ int runOnnxTestVideo(int argc, char** argv)
         videoPath = chosen;
     }
 
+    const bool forceCpu = ArtifactResolver::isLowCostCpuProfile();
+    const bool cudaAvailable = !forceCpu && SAM2::hasCudaDriver();
+    const std::string device = (forceCpu || !cudaAvailable) ? "cpu" : "cuda:0";
+    if (!threadsExplicit) {
+        threads = ArtifactResolver::preferredRuntimeThreads(threads, device);
+    }
+
     const std::string runtimeProfile = ArtifactResolver::preferredRuntimeProfile();
     std::cout << "[INFO] runtime_profile = " << (runtimeProfile.empty() ? "default" : runtimeProfile) << "\n"
               << "       encoder         = " << encoderPath << "\n"
@@ -549,9 +557,6 @@ int runOnnxTestVideo(int argc, char** argv)
               << "       prompt          = " << promptModeName(mode) << "\n"
               << "       threads         = " << threads << "\n\n";
 
-    const bool forceCpu = ArtifactResolver::isLowCostCpuProfile();
-    const bool cudaAvailable = !forceCpu && SAM2::hasCudaDriver();
-    const std::string device = (forceCpu || !cudaAvailable) ? "cpu" : "cuda:0";
     std::cout << "[INFO] Initialising on " << device << "\n";
 
     encoderPath = ArtifactResolver::preferQuantizedEncoderPath(encoderPath, device);

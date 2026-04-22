@@ -38,7 +38,7 @@ def main():
     set_cv2_threads(1)
 
     ap = argparse.ArgumentParser(description="SAM-2 ONNX image demo")
-    ap.add_argument("--model_size", default="tiny", choices=["base_plus", "large", "small", "tiny"])
+    ap.add_argument("--model_size", default="base_plus", choices=["base_plus", "large", "small", "tiny"])
     ap.add_argument("--prompt", default="seed_points", choices=["seed_points", "bounding_box"])
     ap.add_argument("--artifacts", default="auto", choices=["auto", "legacy", "specialized"])
     ap.add_argument("--image", default="", help="Optional image path. If omitted, a file dialog opens.")

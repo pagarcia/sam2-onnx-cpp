@@ -603,7 +603,7 @@ def main():
     set_cv2_threads(1)
 
     ap = argparse.ArgumentParser(description="Video segmentation demo for SAM2 ONNX")
-    ap.add_argument("--model_size", default="tiny", choices=["base_plus", "large", "small", "tiny"])
+    ap.add_argument("--model_size", default="base_plus", choices=["base_plus", "large", "small", "tiny"])
     ap.add_argument("--prompt", default="seed_points", choices=["seed_points", "bounding_box"])
     ap.add_argument("--artifacts", default="auto", choices=["auto", "legacy", "specialized"])
     ap.add_argument("--max_frames", type=int, default=0, help="Max frames to process (0 = all).")
