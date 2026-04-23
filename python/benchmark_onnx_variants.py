@@ -670,7 +670,11 @@ def run_video_benchmark(args, ckpt_dir: Path, enc_path: str):
 
     runtime_paths_by_mode = {}
     labels = {}
-    for mode in ("legacy", "specialized"):
+    modes_to_resolve = ["legacy", "specialized"]
+    if args.video_include_auto:
+        modes_to_resolve.append("auto")
+
+    for mode in modes_to_resolve:
         try:
             runtime_paths_by_mode[mode] = resolve_video_runtime_paths(ckpt_dir, mode)
         except FileNotFoundError:
@@ -705,7 +709,7 @@ def run_video_benchmark(args, ckpt_dir: Path, enc_path: str):
     print("[VIDEO] Shared encoder")
     print(f"  avg/frame={_mean_ms(enc_bench['times_ms']):.2f} ms frames={len(enc_bench['times_ms'])}")
 
-    for mode in ("legacy", "specialized"):
+    for mode in runtime_paths_by_mode:
         if mode not in results or not results[mode]:
             continue
         attn_avg = _median_of_video_runs(results[mode], "attn_ms")
@@ -764,6 +768,30 @@ def run_video_benchmark(args, ckpt_dir: Path, enc_path: str):
             print(f"  propagate_speedup={legacy_propagate / max(specialized_propagate, 1e-9):.2f}x")
         print(f"  mean_abs={delta['mean_abs']:.6f} max_abs={delta['max_abs']:.6f} binary_iou={delta['binary_iou']:.6f}")
 
+    if "legacy" in results and "auto" in results and results["legacy"] and results["auto"]:
+        delta = _compare_video_masks(results["legacy"][0]["pred_masks"], results["auto"][0]["pred_masks"])
+        legacy_total = (
+            _median_of_video_runs(results["legacy"], "attn_ms")
+            + _median_of_video_runs(results["legacy"], "dec_ms")
+            + _median_of_video_runs(results["legacy"], "men_ms")
+        )
+        auto_total = (
+            _median_of_video_runs(results["auto"], "attn_ms")
+            + _median_of_video_runs(results["auto"], "dec_ms")
+            + _median_of_video_runs(results["auto"], "men_ms")
+        )
+        print("[VIDEO] Auto vs legacy")
+        print(
+            f"  baseline={labels.get('legacy', 'legacy')}"
+            f" candidate={labels.get('auto', 'auto')}"
+        )
+        print(f"  speedup={legacy_total / max(auto_total, 1e-9):.2f}x")
+        legacy_propagate = _median_of_video_section(results["legacy"], "propagate", "total_ms")
+        auto_propagate = _median_of_video_section(results["auto"], "propagate", "total_ms")
+        if legacy_propagate > 0.0 and auto_propagate > 0.0:
+            print(f"  propagate_speedup={legacy_propagate / max(auto_propagate, 1e-9):.2f}x")
+        print(f"  mean_abs={delta['mean_abs']:.6f} max_abs={delta['max_abs']:.6f} binary_iou={delta['binary_iou']:.6f}")
+
     if args.native_compare:
         repo_root = Path(__file__).resolve().parent.parent
         try:
@@ -794,7 +822,7 @@ def run_video_benchmark(args, ckpt_dir: Path, enc_path: str):
             f" total_per_frame={native['total_frame_ms']:.2f} ms"
         )
 
-        for mode in ("legacy", "specialized"):
+        for mode in runtime_paths_by_mode:
             if mode not in results or not results[mode]:
                 continue
             delta = _compare_native_masks(results[mode][0]["pred_masks"], native["pred_masks"])
@@ -826,6 +854,7 @@ def main():
     ap.add_argument("--video", default="", help="Optional video path for runtime benchmarking")
     ap.add_argument("--frames", type=int, default=16, help="Max video frames to benchmark")
     ap.add_argument("--video_order", default="both", choices=["both", "single"], help="Run video variants in both orders and report median results, or only once in legacy-then-optimized order")
+    ap.add_argument("--video_include_auto", action="store_true", help="Also benchmark the auto-resolved video runtime path")
     ap.add_argument("--session_warmup", type=int, default=1, help="Warmup passes for video runtime sessions before measured runs")
     ap.add_argument("--warmup", type=int, default=3, help="Warmup runs for image decoder benchmark")
     ap.add_argument("--repeat", type=int, default=10, help="Measured runs for image decoder benchmark")
