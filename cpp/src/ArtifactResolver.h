@@ -106,7 +106,7 @@ inline std::string preferredVideoModuleVariant()
 {
     const char *value = std::getenv("SAM2_ORT_VIDEO_MODULE_VARIANT");
     if (!value) {
-        return "auto";
+        return "fp32";
     }
     const std::string lowered = lowerCopy(value);
     if (lowered == "int8" || lowered == "fp32" || lowered == "auto") {

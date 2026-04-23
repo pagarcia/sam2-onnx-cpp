@@ -9,6 +9,12 @@ Default behavior by platform:
 
 Env toggles:
   SAM2_ORT_ACCEL = auto | cpu | cuda | coreml   (default: auto)
+  SAM2_ORT_RUNTIME_PROFILE = cpu_lowcost        (forces CPU + lean defaults)
+  SAM2_ORT_ENCODER_VARIANT = auto | fp32 | int8
+  SAM2_ORT_VIDEO_MODULE_VARIANT = auto | fp32 | int8  (default: fp32)
+  SAM2_ORT_CPU_THREADS = positive integer
+  SAM2_ORT_VIDEO_MAX_MEMORY_FRAMES = positive integer
+  SAM2_ORT_VIDEO_MAX_OBJECT_POINTERS = positive integer
   SAM2_ORT_COREML_ALL = 0 | 1   (default: 0)
 """
 
@@ -47,7 +53,7 @@ def _variant_env(name: str, default: str = "auto") -> str:
 
 
 ENCODER_VARIANT = _variant_env("SAM2_ORT_ENCODER_VARIANT")
-VIDEO_MODULE_VARIANT = _variant_env("SAM2_ORT_VIDEO_MODULE_VARIANT")
+VIDEO_MODULE_VARIANT = _variant_env("SAM2_ORT_VIDEO_MODULE_VARIANT", "fp32")
 
 
 def _env_int(name: str, fallback: int, minimum: int = 0) -> int:

@@ -8,6 +8,7 @@
 #include <onnxruntime_cxx_api.h>
 
 #include <iostream>
+#include <exception>
 #include <thread>
 #include <chrono>
 
@@ -224,10 +225,10 @@ int runOnnxTestImage(int argc,char** argv)
     if(imgBGR.empty()){ cerr<<"[ERROR] could not load "<<imagePath<<"\n"; return 1; }
 
     /* ---------------  init SAM-2 (GPU if available)  --------------- */
+    const string requestedEncoderPath = encoderPath;
+    const string requestedDecoderPath = decoderPath;
     const bool forceCpu = ArtifactResolver::isLowCostCpuProfile();
     bool cudaAvail=false;
-    // OLD (kept here for reference – relied on GetAvailableProviders, which crashes in PCs with no GPU)
-    // for(auto&p:Ort::GetAvailableProviders()) if(p=="CUDAExecutionProvider") cudaAvail=true;
     if (!forceCpu) {
         cudaAvail = SAM2::hasCudaDriver();
     }
@@ -244,19 +245,49 @@ int runOnnxTestImage(int argc,char** argv)
         <<"       prompt ="<<(mode==PromptMode::SEED_POINTS?"seed_points":"bounding_box")<<"\n"
         <<"       threads="<<threads<<"\n\n";
 
-    cout<<"[INFO] Initialising on "<<device<<"\n";
-
-    encoderPath = ArtifactResolver::preferQuantizedEncoderPath(encoderPath, device);
-    const auto decoderSelection = ArtifactResolver::resolveImageDecoderPath(
-        decoderPath,
-        mode==PromptMode::SEED_POINTS ? "seed_points" : "bounding_box");
-    decoderPath = decoderSelection.path;
-    cout<<"[INFO] Resolved encoder: "<<encoderPath<<"\n";
-    cout<<"[INFO] Image artifacts : "<<decoderSelection.mode<<" ("<<decoderPath<<")\n";
-
     AppState st;
-    if(!st.sam.initialize(encoderPath,decoderPath,threads,device))
-    { cerr<<"[ERROR] SAM2 init failed\n"; return 1; }
+    auto initializeOnDevice = [&](const string& initDevice) -> bool {
+        const int initThreads = threadsExplicit
+            ? threads
+            : ArtifactResolver::preferredRuntimeThreads(threads, initDevice);
+        const string resolvedEncoder =
+            ArtifactResolver::preferQuantizedEncoderPath(requestedEncoderPath, initDevice);
+        const auto decoderSelection = ArtifactResolver::resolveImageDecoderPath(
+            requestedDecoderPath,
+            mode==PromptMode::SEED_POINTS ? "seed_points" : "bounding_box");
+
+        cout<<"[INFO] Initialising on "<<initDevice<<" with "<<initThreads<<" thread(s)\n";
+        cout<<"[INFO] Resolved encoder: "<<resolvedEncoder<<"\n";
+        cout<<"[INFO] Image artifacts : "<<decoderSelection.mode<<" ("<<decoderSelection.path<<")\n";
+
+        try {
+            if (st.sam.initialize(resolvedEncoder, decoderSelection.path, initThreads, initDevice)) {
+                encoderPath = resolvedEncoder;
+                decoderPath = decoderSelection.path;
+                device = initDevice;
+                threads = initThreads;
+                return true;
+            }
+        } catch (const std::exception& e) {
+            cerr<<"[WARN] SAM2 init on "<<initDevice<<" failed: "<<e.what()<<"\n";
+        }
+        return false;
+    };
+
+    if(!initializeOnDevice(device)) {
+        if(device != "cpu") {
+            cerr<<"[WARN] Falling back to CPU runtime.\n";
+            if(initializeOnDevice("cpu")) {
+                cout<<"[INFO] CPU fallback initialised successfully.\n";
+            } else {
+                cerr<<"[ERROR] SAM2 init failed\n";
+                return 1;
+            }
+        } else {
+            cerr<<"[ERROR] SAM2 init failed\n";
+            return 1;
+        }
+    }
 
     st.original  = imgBGR;
     st.origSize  = SAM2Size(imgBGR.cols, imgBGR.rows);

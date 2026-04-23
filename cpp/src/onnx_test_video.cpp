@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <iostream>
 #include <map>
 #include <string>
@@ -540,9 +541,13 @@ int runOnnxTestVideo(int argc, char** argv)
         videoPath = chosen;
     }
 
+    const std::string requestedEncoderPath = encoderPath;
+    const std::string requestedDecoderPath = decoderPath;
+    const std::string requestedMemAttnPath = memAttnPath;
+    const std::string requestedMemEncPath = memEncPath;
     const bool forceCpu = ArtifactResolver::isLowCostCpuProfile();
     const bool cudaAvailable = !forceCpu && SAM2::hasCudaDriver();
-    const std::string device = (forceCpu || !cudaAvailable) ? "cpu" : "cuda:0";
+    std::string device = (forceCpu || !cudaAvailable) ? "cpu" : "cuda:0";
     if (!threadsExplicit) {
         threads = ArtifactResolver::preferredRuntimeThreads(threads, device);
     }
@@ -557,34 +562,67 @@ int runOnnxTestVideo(int argc, char** argv)
               << "       prompt          = " << promptModeName(mode) << "\n"
               << "       threads         = " << threads << "\n\n";
 
-    std::cout << "[INFO] Initialising on " << device << "\n";
-
-    encoderPath = ArtifactResolver::preferQuantizedEncoderPath(encoderPath, device);
-    const auto runtimeSelection = ArtifactResolver::resolveVideoRuntimePaths(
-        decoderPath,
-        memAttnPath,
-        memEncPath,
-        false,
-        device);
-
-    std::cout << "[INFO] Resolved encoder    = " << encoderPath << "\n"
-              << "       decoder init       = " << runtimeSelection.decoderInitPath << "\n"
-              << "       decoder propagate  = " << runtimeSelection.decoderPropagatePath << "\n"
-              << "       mem attention      = " << runtimeSelection.memoryAttentionPath << "\n"
-              << "       mem encoder        = " << runtimeSelection.memoryEncoderPath << "\n"
-              << "       video artifacts    = " << runtimeSelection.mode << "\n\n";
-
     SAM2 sam;
-    if (!sam.initializeVideo(
-            encoderPath,
-            runtimeSelection.decoderInitPath,
-            runtimeSelection.decoderPropagatePath,
-            runtimeSelection.memoryAttentionPath,
-            runtimeSelection.memoryEncoderPath,
-            threads,
-            device)) {
-        std::cerr << "[ERROR] SAM2 init failed\n";
-        return 1;
+    std::string selectedRuntimeMode;
+    auto initializeOnDevice = [&](const std::string& initDevice) -> bool {
+        const int initThreads = threadsExplicit
+            ? threads
+            : ArtifactResolver::preferredRuntimeThreads(threads, initDevice);
+        const std::string resolvedEncoder =
+            ArtifactResolver::preferQuantizedEncoderPath(requestedEncoderPath, initDevice);
+        const auto runtimeSelection = ArtifactResolver::resolveVideoRuntimePaths(
+            requestedDecoderPath,
+            requestedMemAttnPath,
+            requestedMemEncPath,
+            false,
+            initDevice);
+
+        std::cout << "[INFO] Initialising on " << initDevice
+                  << " with " << initThreads << " thread(s)\n";
+        std::cout << "[INFO] Resolved encoder    = " << resolvedEncoder << "\n"
+                  << "       decoder init       = " << runtimeSelection.decoderInitPath << "\n"
+                  << "       decoder propagate  = " << runtimeSelection.decoderPropagatePath << "\n"
+                  << "       mem attention      = " << runtimeSelection.memoryAttentionPath << "\n"
+                  << "       mem encoder        = " << runtimeSelection.memoryEncoderPath << "\n"
+                  << "       video artifacts    = " << runtimeSelection.mode << "\n\n";
+
+        try {
+            if (sam.initializeVideo(
+                    resolvedEncoder,
+                    runtimeSelection.decoderInitPath,
+                    runtimeSelection.decoderPropagatePath,
+                    runtimeSelection.memoryAttentionPath,
+                    runtimeSelection.memoryEncoderPath,
+                    initThreads,
+                    initDevice)) {
+                encoderPath = resolvedEncoder;
+                decoderPath = runtimeSelection.decoderInitPath;
+                memAttnPath = runtimeSelection.memoryAttentionPath;
+                memEncPath = runtimeSelection.memoryEncoderPath;
+                selectedRuntimeMode = runtimeSelection.mode;
+                device = initDevice;
+                threads = initThreads;
+                return true;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[WARN] SAM2 init on " << initDevice << " failed: " << e.what() << "\n";
+        }
+        return false;
+    };
+
+    if (!initializeOnDevice(device)) {
+        if (device != "cpu") {
+            std::cerr << "[WARN] Falling back to CPU runtime.\n";
+            if (initializeOnDevice("cpu")) {
+                std::cout << "[INFO] CPU fallback initialised successfully.\n";
+            } else {
+                std::cerr << "[ERROR] SAM2 init failed\n";
+                return 1;
+            }
+        } else {
+            std::cerr << "[ERROR] SAM2 init failed\n";
+            return 1;
+        }
     }
 
     std::map<int, SAM2Prompts> anchors;
@@ -628,7 +666,7 @@ int runOnnxTestVideo(int argc, char** argv)
 
     const size_t dot = videoPath.find_last_of('.');
     const std::string stem = dot == std::string::npos ? videoPath : videoPath.substr(0, dot);
-    const std::string outVideo = stem + "_" + runtimeSelection.mode + "_mask_overlay.avi";
+    const std::string outVideo = stem + "_" + selectedRuntimeMode + "_mask_overlay.avi";
     cv::VideoWriter writer(
         outVideo,
         cv::VideoWriter::fourcc('M', 'J', 'P', 'G'),
