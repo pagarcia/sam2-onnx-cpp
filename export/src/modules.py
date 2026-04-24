@@ -78,6 +78,7 @@ class _DecoderBase(nn.Module):
         high_res_feats_1: torch.Tensor,
         point_inputs: dict[str, torch.Tensor] | None,
         single_token_obj_ptr: bool = False,
+        multimask_output: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         high_res_feats = [high_res_feats_0, high_res_feats_1]
         decoder = self.model.sam_mask_decoder
@@ -98,7 +99,7 @@ class _DecoderBase(nn.Module):
                 point_inputs=point_inputs,
                 mask_inputs=None,
                 high_res_features=high_res_feats,
-                multimask_output=True,
+                multimask_output=multimask_output,
             )
         finally:
             if single_token_obj_ptr:
@@ -157,6 +158,7 @@ class VideoDecoderInit(_DecoderBase):
             high_res_feats_1,
             point_inputs,
             single_token_obj_ptr=True,
+            multimask_output=True,
         )
         return obj_ptr, mask_for_mem, pred_mask
 
@@ -175,6 +177,7 @@ class VideoDecoderPropagate(_DecoderBase):
             high_res_feats_1,
             point_inputs=None,
             single_token_obj_ptr=True,
+            multimask_output=True,
         )
         return obj_ptr, mask_for_mem, pred_mask
 
@@ -361,8 +364,10 @@ class _MemEncoderBase(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch, channels, height, width = pix_feat.shape
         flattened = pix_feat.view(batch, channels, height * width).permute(2, 0, 1)
-
-        object_score_logits = torch.zeros(1, 1, device=pix_feat.device)
+        # Default to "object present" when exporting the standalone memory encoder.
+        # SAM2 base-plus uses no_obj_embed_spatial, and a neutral 0 logit would route
+        # every frame through the no-object spatial embedding path.
+        object_score_logits = torch.full((batch, 1), 10.0, device=pix_feat.device)
 
         maskmem_features, maskmem_pos_enc = self.model._encode_new_memory(
             current_vision_feats=[flattened],
