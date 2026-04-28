@@ -46,6 +46,8 @@ __pycache__/
 # Python Tools for Visual Studio (PTVS)
 *.pyc
 
+tmp/
+
 # Some VS Code settings
 *.vscode
 

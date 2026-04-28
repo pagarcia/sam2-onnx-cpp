@@ -209,8 +209,11 @@ public:
                                          float threshold = 0.f);
     static Image<float> extractAndCreateMask(Ort::Value &maskTensor, const SAM2Size &targetSize);
 
-    /// Helper to know if ther is NVIDIA driver + at least one CUDA device present
+    /// Helper to know if there is NVIDIA driver + at least one CUDA device present
     static bool hasCudaDriver();
+
+    /// Helper to know if the loaded ONNX Runtime exposes the DirectML provider
+    static bool hasDirectMLProvider();
 
     // ORT session config
     static void setupSessionOptions(Ort::SessionOptions &options,

@@ -7,13 +7,170 @@
 #include <opencv2/opencv.hpp>
 #include <onnxruntime_cxx_api.h>
 
-#include <iostream>
+#include <algorithm>
+#include <cctype>
 #include <exception>
+#include <filesystem>
+#include <iostream>
+#include <sstream>
+#include <string>
 #include <thread>
 #include <chrono>
+#include <vector>
 
 using namespace std;
 using namespace std::chrono;
+
+static string lowerCopy(string value)
+{
+    transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](unsigned char ch) { return static_cast<char>(tolower(ch)); });
+    return value;
+}
+
+static string normalizeDeviceArg(const string& raw)
+{
+    string value = lowerCopy(raw);
+    if (value.empty() || value == "auto") {
+        return "auto";
+    }
+    if (value == "cpu") {
+        return "cpu";
+    }
+    if (value == "cuda") {
+        return "cuda:0";
+    }
+    if (value.rfind("cuda:", 0) == 0) {
+        return value;
+    }
+    if (value == "dml" || value == "directml") {
+        return "dml:0";
+    }
+    if (value.rfind("dml:", 0) == 0) {
+        return value;
+    }
+    return "";
+}
+
+static void appendDeviceCandidate(vector<string>* devices, const string& device)
+{
+    if (find(devices->begin(), devices->end(), device) == devices->end()) {
+        devices->push_back(device);
+    }
+}
+
+static vector<string> buildDeviceCandidates(const string& requestedDevice, bool forceCpu)
+{
+    vector<string> devices;
+    if (requestedDevice == "auto") {
+        if (!forceCpu && SAM2::hasCudaDriver()) {
+            appendDeviceCandidate(&devices, "cuda:0");
+        }
+        if (!forceCpu && SAM2::hasDirectMLProvider()) {
+            appendDeviceCandidate(&devices, "dml:0");
+        }
+        appendDeviceCandidate(&devices, "cpu");
+        return devices;
+    }
+
+    appendDeviceCandidate(&devices, requestedDevice);
+    if (requestedDevice != "cpu") {
+        appendDeviceCandidate(&devices, "cpu");
+    }
+    return devices;
+}
+
+static vector<string> splitCommaList(const string& value)
+{
+    vector<string> items;
+    string item;
+    stringstream ss(value);
+    while (getline(ss, item, ',')) {
+        if (!item.empty()) {
+            items.push_back(item);
+        }
+    }
+    return items;
+}
+
+static bool parseIntList(const string& spec, vector<int>* values)
+{
+    values->clear();
+    for (const string& part : splitCommaList(spec)) {
+        try {
+            size_t consumed = 0;
+            const int value = stoi(part, &consumed);
+            if (consumed != part.size()) {
+                return false;
+            }
+            values->push_back(value);
+        } catch (...) {
+            return false;
+        }
+    }
+    return !values->empty();
+}
+
+static bool parseBoxSpec(const string& spec, SAM2Rect* rectOut)
+{
+    vector<int> values;
+    if (!parseIntList(spec, &values) || values.size() != 4) {
+        return false;
+    }
+
+    const int x1 = values[0];
+    const int y1 = values[1];
+    const int x2 = values[2];
+    const int y2 = values[3];
+    SAM2Rect rect(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1));
+    if (rect.width <= 1 || rect.height <= 1) {
+        return false;
+    }
+
+    *rectOut = rect;
+    return true;
+}
+
+static bool parsePointSpec(const string& spec, int defaultLabel, SAM2Point* pointOut, int* labelOut)
+{
+    vector<int> values;
+    if (!parseIntList(spec, &values) || (values.size() != 2 && values.size() != 3)) {
+        return false;
+    }
+
+    const int label = values.size() == 3 ? values[2] : defaultLabel;
+    if (label != 0 && label != 1) {
+        return false;
+    }
+
+    *pointOut = SAM2Point(values[0], values[1]);
+    *labelOut = label;
+    return true;
+}
+
+static string safeDeviceSuffix(string device)
+{
+    for (char& ch : device) {
+        if (!isalnum(static_cast<unsigned char>(ch))) {
+            ch = '_';
+        }
+    }
+    return device;
+}
+
+static string overlayPathForDevice(const string& requestedPath, const string& device, bool multiDevice)
+{
+    if (requestedPath.empty() || !multiDevice) {
+        return requestedPath;
+    }
+
+    filesystem::path path(requestedPath);
+    const string suffix = "_" + safeDeviceSuffix(device);
+    return (path.parent_path() / (path.stem().string() + suffix + path.extension().string())).string();
+}
 
 /* ────────────────────────────  helper: green overlay  ───────────────────────── */
 static cv::Mat overlayMask(const cv::Mat& img, const cv::Mat& mask)
@@ -52,6 +209,190 @@ struct AppState
     void resetSeeds() { points.clear(); labels.clear(); }
     void resetRect () { drawing=false; hasFinalRect=false; rect=SAM2Rect(); }
 };
+
+struct CliPrompt
+{
+    bool hasBox = false;
+    SAM2Rect box;
+    vector<SAM2Point> points;
+    vector<int> labels;
+};
+
+struct ImageRunResult
+{
+    bool ok = false;
+    string device;
+    double firstEncoderMs = 0.0;
+    double avgEncoderMs = 0.0;
+    double minEncoderMs = 0.0;
+    double maxEncoderMs = 0.0;
+    double firstDecodeMs = 0.0;
+    double avgDecodeMs = 0.0;
+    double minDecodeMs = 0.0;
+    double maxDecodeMs = 0.0;
+};
+
+static bool buildPromptsFromCli(const CliPrompt& cliPrompt,
+                                PromptMode mode,
+                                SAM2Prompts* promptsOut,
+                                string* errorOut)
+{
+    SAM2Prompts prompts;
+    if (mode == PromptMode::BOUNDING_BOX) {
+        if (!cliPrompt.hasBox) {
+            *errorOut = "--box is required with --prompt bounding_box in --no_gui/--benchmark mode";
+            return false;
+        }
+        prompts.rects.push_back(cliPrompt.box);
+    } else {
+        if (cliPrompt.points.empty()) {
+            *errorOut = "at least one --point, --fg, or --bg is required with seed_points in --no_gui/--benchmark mode";
+            return false;
+        }
+        prompts.points = cliPrompt.points;
+        prompts.pointLabels = cliPrompt.labels;
+    }
+
+    *promptsOut = std::move(prompts);
+    return true;
+}
+
+static bool runImageNoGuiOnDevice(const string& initDevice,
+                                  const string& requestedEncoderPath,
+                                  const string& requestedDecoderPath,
+                                  PromptMode mode,
+                                  const SAM2Prompts& prompts,
+                                  const cv::Mat& imgBGR,
+                                  int baseThreads,
+                                  bool threadsExplicit,
+                                  int warmupRuns,
+                                  int measuredRuns,
+                                  const string& saveOverlayPath,
+                                  ImageRunResult* resultOut)
+{
+    ImageRunResult result;
+    result.device = initDevice;
+
+    if (initDevice.rfind("cuda:", 0) == 0 && !SAM2::hasCudaDriver()) {
+        cerr << "[WARN] " << initDevice << " unavailable: CUDA runtime/device not detected.\n";
+        if (resultOut) *resultOut = result;
+        return false;
+    }
+    if (initDevice.rfind("dml", 0) == 0 && !SAM2::hasDirectMLProvider()) {
+        cerr << "[WARN] " << initDevice << " unavailable: DirectML provider not detected.\n";
+        if (resultOut) *resultOut = result;
+        return false;
+    }
+
+    const int initThreads = threadsExplicit
+        ? baseThreads
+        : ArtifactResolver::preferredRuntimeThreads(baseThreads, initDevice);
+    const string resolvedEncoder =
+        ArtifactResolver::preferQuantizedEncoderPath(requestedEncoderPath, initDevice);
+    const auto decoderSelection = ArtifactResolver::resolveImageDecoderPath(
+        requestedDecoderPath,
+        mode == PromptMode::SEED_POINTS ? "seed_points" : "bounding_box",
+        false,
+        initDevice);
+
+    cout << "[INFO] Benchmark init " << initDevice << " with " << initThreads << " thread(s)\n";
+    cout << "[INFO] Resolved encoder: " << resolvedEncoder << "\n";
+    cout << "[INFO] Image artifacts : " << decoderSelection.mode
+         << " (" << decoderSelection.path << ")\n";
+
+    SAM2 sam;
+    if (!sam.initialize(resolvedEncoder, decoderSelection.path, initThreads, initDevice)) {
+        cerr << "[ERROR] SAM2 init failed on " << initDevice << "\n";
+        if (resultOut) *resultOut = result;
+        return false;
+    }
+
+    const int safeWarmups = max(0, warmupRuns);
+    const int safeRuns = max(1, measuredRuns);
+    const SAM2Size originalSize(imgBGR.cols, imgBGR.rows);
+    const Image<float> normalizedImage = CVHelpers::normalizeRGB(imgBGR, 255.0);
+
+    vector<double> encoderTimes;
+    encoderTimes.reserve(static_cast<size_t>(safeRuns));
+    for (int i = 0; i < safeWarmups + safeRuns; ++i) {
+        const auto encStart = high_resolution_clock::now();
+        if (!sam.preprocessImage(normalizedImage)) {
+            cerr << "[ERROR] preprocessImage failed on " << initDevice << "\n";
+            if (resultOut) *resultOut = result;
+            return false;
+        }
+        const double ms = duration<double, milli>(high_resolution_clock::now() - encStart).count();
+        if (i >= safeWarmups) {
+            encoderTimes.push_back(ms);
+        }
+    }
+
+    result.firstEncoderMs = encoderTimes.front();
+    result.minEncoderMs = *min_element(encoderTimes.begin(), encoderTimes.end());
+    result.maxEncoderMs = *max_element(encoderTimes.begin(), encoderTimes.end());
+    double encoderSum = 0.0;
+    for (double ms : encoderTimes) {
+        encoderSum += ms;
+    }
+    result.avgEncoderMs = encoderSum / static_cast<double>(encoderTimes.size());
+
+    sam.setPrompts(prompts, originalSize);
+
+    vector<double> decodeTimes;
+    decodeTimes.reserve(static_cast<size_t>(safeRuns));
+    Image<float> lastMask;
+
+    for (int i = 0; i < safeWarmups + safeRuns; ++i) {
+        const auto decStart = high_resolution_clock::now();
+        Image<float> mask = sam.inferSingleFrame(originalSize);
+        const double ms = duration<double, milli>(high_resolution_clock::now() - decStart).count();
+        if (mask.getWidth() <= 0 || mask.getHeight() <= 0) {
+            cerr << "[ERROR] decoder returned an empty mask on " << initDevice << "\n";
+            if (resultOut) *resultOut = result;
+            return false;
+        }
+        if (i >= safeWarmups) {
+            decodeTimes.push_back(ms);
+            lastMask = std::move(mask);
+        }
+    }
+
+    result.firstDecodeMs = decodeTimes.front();
+    result.minDecodeMs = *min_element(decodeTimes.begin(), decodeTimes.end());
+    result.maxDecodeMs = *max_element(decodeTimes.begin(), decodeTimes.end());
+    double sum = 0.0;
+    for (double ms : decodeTimes) {
+        sum += ms;
+    }
+    result.avgDecodeMs = sum / static_cast<double>(decodeTimes.size());
+    result.ok = true;
+
+    cout << "[RESULT] device=" << initDevice
+         << " encoder_first_ms=" << result.firstEncoderMs
+         << " encoder_avg_ms=" << result.avgEncoderMs
+         << " encoder_min_ms=" << result.minEncoderMs
+         << " encoder_max_ms=" << result.maxEncoderMs
+         << " decode_first_ms=" << result.firstDecodeMs
+         << " decode_avg_ms=" << result.avgDecodeMs
+         << " decode_min_ms=" << result.minDecodeMs
+         << " decode_max_ms=" << result.maxDecodeMs
+         << " runs=" << safeRuns
+         << " warmup=" << safeWarmups
+         << "\n";
+
+    if (!saveOverlayPath.empty()) {
+        const cv::Mat maskCv = CVHelpers::imageToCvMatWithType(lastMask, CV_8UC1, 255.0);
+        const cv::Mat overlay = overlayMask(imgBGR, maskCv);
+        if (!cv::imwrite(saveOverlayPath, overlay)) {
+            cerr << "[WARN] Failed to save overlay to " << saveOverlayPath << "\n";
+        } else {
+            cout << "[INFO] Saved overlay to " << saveOverlayPath << "\n";
+        }
+    }
+
+    if (resultOut) *resultOut = result;
+    return true;
+}
 
 /* ───────────────────────  recompute mask & refresh GUI  ─────────────────────── */
 static void updateDisplay(AppState* st, bool forceRunBBox = false)
@@ -156,11 +497,23 @@ static void onMouse(int event,int x,int y,int,void* ud)
         }
         else if (event == cv::EVENT_LBUTTONUP && st->drawing)
         {
-            st->drawing=false; st->hasFinalRect=true;
+            st->drawing=false;
             st->rect.width  = x - st->rect.x;
             st->rect.height = y - st->rect.y;
+            SAM2Rect r = st->rect;
+            if (r.width<0)  { r.x += r.width;  r.width  = -r.width; }
+            if (r.height<0) { r.y += r.height; r.height = -r.height; }
+            if (r.width <= 1 || r.height <= 1) {
+                st->hasFinalRect = false;
+                st->rect = SAM2Rect();
+                cout << "[INFO] Ignored empty box; drag a rectangle with non-zero width and height.\n";
+                updateDisplay(st);
+                return;
+            }
+            st->rect = r;
+            st->hasFinalRect=true;
             cout << "[INFO] Box finalised: ("<<st->rect.x<<","<<st->rect.y
-                 <<") to ("<<x<<","<<y<<")\n";
+                 <<") to ("<<st->rect.x + st->rect.width<<","<<st->rect.y + st->rect.height<<")\n";
             updateDisplay(st, /*forceRunBBox=*/true);
         }
     }
@@ -175,7 +528,15 @@ int runOnnxTestImage(int argc,char** argv)
     string imagePath;                     // empty → file dialog
     int    threads   = (int)thread::hardware_concurrency(); if(threads<=0) threads=4;
     bool   threadsExplicit = false;
+    string requestedDevice = "auto";
     PromptMode mode  = PromptMode::SEED_POINTS;             // default
+    CliPrompt cliPrompt;
+    bool noGui = false;
+    bool benchmark = false;
+    int benchmarkRuns = 5;
+    int benchmarkWarmups = 1;
+    string benchmarkDevicesSpec;
+    string saveOverlayPath;
 
     for(int i=2;i<argc;++i)   // argv[1] is "--onnx_test_image"
     {
@@ -183,7 +544,61 @@ int runOnnxTestImage(int argc,char** argv)
         if((a=="--encoder") && i+1<argc)       encoderPath = argv[++i];
         else if((a=="--decoder") && i+1<argc)  decoderPath = argv[++i];
         else if((a=="--image")   && i+1<argc)  imagePath   = argv[++i];
+        else if((a=="--device")  && i+1<argc)  requestedDevice = argv[++i];
         else if((a=="--threads") && i+1<argc)  { threads = stoi(argv[++i]); threadsExplicit = true; }
+        else if(a=="--no_gui")                 noGui = true;
+        else if(a=="--benchmark")              { benchmark = true; noGui = true; }
+        else if((a=="--runs") && i+1<argc)     benchmarkRuns = max(1, stoi(argv[++i]));
+        else if((a=="--warmup") && i+1<argc)   benchmarkWarmups = max(0, stoi(argv[++i]));
+        else if((a=="--benchmark_devices") && i+1<argc) benchmarkDevicesSpec = argv[++i];
+        else if((a=="--save_overlay") && i+1<argc) saveOverlayPath = argv[++i];
+        else if((a=="--box") && i+1<argc)
+        {
+            SAM2Rect box;
+            if (!parseBoxSpec(argv[++i], &box)) {
+                cerr<<"[ERROR] --box must be x1,y1,x2,y2 with non-zero width and height\n";
+                return 1;
+            }
+            cliPrompt.box = box;
+            cliPrompt.hasBox = true;
+            mode = PromptMode::BOUNDING_BOX;
+        }
+        else if((a=="--point") && i+1<argc)
+        {
+            SAM2Point point;
+            int label = 1;
+            if (!parsePointSpec(argv[++i], 1, &point, &label)) {
+                cerr<<"[ERROR] --point must be x,y or x,y,label where label is 0|1\n";
+                return 1;
+            }
+            cliPrompt.points.push_back(point);
+            cliPrompt.labels.push_back(label);
+            mode = PromptMode::SEED_POINTS;
+        }
+        else if((a=="--fg") && i+1<argc)
+        {
+            SAM2Point point;
+            int label = 1;
+            if (!parsePointSpec(argv[++i], 1, &point, &label)) {
+                cerr<<"[ERROR] --fg must be x,y\n";
+                return 1;
+            }
+            cliPrompt.points.push_back(point);
+            cliPrompt.labels.push_back(1);
+            mode = PromptMode::SEED_POINTS;
+        }
+        else if((a=="--bg") && i+1<argc)
+        {
+            SAM2Point point;
+            int label = 0;
+            if (!parsePointSpec(argv[++i], 0, &point, &label)) {
+                cerr<<"[ERROR] --bg must be x,y\n";
+                return 1;
+            }
+            cliPrompt.points.push_back(point);
+            cliPrompt.labels.push_back(0);
+            mode = PromptMode::SEED_POINTS;
+        }
         else if((a=="--prompt")  && i+1<argc)
         {
             string s = argv[++i];
@@ -199,8 +614,17 @@ int runOnnxTestImage(int argc,char** argv)
             "  --encoder  image_encoder.onnx     (default: image_encoder.onnx)\n"
             "  --decoder  image_decoder.onnx     (default: image_decoder.onnx)\n"
             "  --image    myimage.jpg            (file dialog if omitted)\n"
+            "  --device   auto|cpu|cuda[:N]|dml[:N]  (default: auto)\n"
             "  --threads  N                      (#CPU threads, default: HW-concurrency)\n"
-            "  --prompt   seed_points|bounding_box   (default: seed_points)\n\n"
+            "  --prompt   seed_points|bounding_box   (default: seed_points)\n"
+            "  --no_gui                           (run one prompt and exit)\n"
+            "  --benchmark                        (run deterministic timing and exit)\n"
+            "  --benchmark_devices cpu,dml:0,cuda:0\n"
+            "  --runs N --warmup N                (benchmark decode runs, default: 5/1)\n"
+            "  --box x1,y1,x2,y2                  (bbox prompt; implies bounding_box)\n"
+            "  --fg x,y --bg x,y                  (seed prompts; can repeat)\n"
+            "  --point x,y[,label]                (label: 1=FG, 0=BG)\n"
+            "  --save_overlay out.png             (non-GUI output overlay)\n\n"
             "L-click  (seed)   = FG point\n"
             "R-click  (seed)   = BG point\n"
             "M-click  (seed)   = reset points\n\n"
@@ -227,14 +651,74 @@ int runOnnxTestImage(int argc,char** argv)
     /* ---------------  init SAM-2 (GPU if available)  --------------- */
     const string requestedEncoderPath = encoderPath;
     const string requestedDecoderPath = decoderPath;
-    const bool forceCpu = ArtifactResolver::isLowCostCpuProfile();
-    bool cudaAvail=false;
-    if (!forceCpu) {
-        cudaAvail = SAM2::hasCudaDriver();
+    requestedDevice = normalizeDeviceArg(requestedDevice);
+    if (requestedDevice.empty()) {
+        cerr<<"[ERROR] --device must be auto|cpu|cuda[:N]|dml[:N]\n";
+        return 1;
     }
-    string device = (forceCpu || !cudaAvail) ? "cpu" : "cuda:0";
+    const bool forceCpu = ArtifactResolver::isLowCostCpuProfile();
+    const vector<string> deviceCandidates = buildDeviceCandidates(requestedDevice, forceCpu);
+    string device = deviceCandidates.empty() ? "cpu" : deviceCandidates.front();
     if (!threadsExplicit) {
         threads = ArtifactResolver::preferredRuntimeThreads(threads, device);
+    }
+
+    if (noGui) {
+        SAM2Prompts prompts;
+        string promptError;
+        if (!buildPromptsFromCli(cliPrompt, mode, &prompts, &promptError)) {
+            cerr << "[ERROR] " << promptError << "\n";
+            return 1;
+        }
+
+        vector<string> runDevices;
+        if (benchmark) {
+            const string devicesSpec = benchmarkDevicesSpec.empty()
+                ? "cpu,dml:0,cuda:0"
+                : benchmarkDevicesSpec;
+            for (const string& item : splitCommaList(devicesSpec)) {
+                const string normalized = normalizeDeviceArg(item);
+                if (normalized.empty()) {
+                    cerr << "[ERROR] --benchmark_devices contains invalid device: " << item << "\n";
+                    return 1;
+                }
+                if (normalized == "auto") {
+                    for (const string& candidate : buildDeviceCandidates("auto", forceCpu)) {
+                        appendDeviceCandidate(&runDevices, candidate);
+                    }
+                } else {
+                    appendDeviceCandidate(&runDevices, normalized);
+                }
+            }
+        } else {
+            runDevices = deviceCandidates;
+        }
+
+        bool anyOk = false;
+        const bool multiDevice = runDevices.size() > 1;
+        for (const string& runDevice : runDevices) {
+            ImageRunResult result;
+            const string overlayPath = overlayPathForDevice(saveOverlayPath, runDevice, multiDevice);
+            const bool ok = runImageNoGuiOnDevice(
+                runDevice,
+                requestedEncoderPath,
+                requestedDecoderPath,
+                mode,
+                prompts,
+                imgBGR,
+                threads,
+                threadsExplicit,
+                benchmark ? benchmarkWarmups : 0,
+                benchmark ? benchmarkRuns : 1,
+                overlayPath,
+                &result);
+            anyOk = anyOk || ok;
+            if (ok && !benchmark) {
+                break;
+            }
+        }
+
+        return anyOk ? 0 : 1;
     }
 
     const string runtimeProfile = ArtifactResolver::preferredRuntimeProfile();
@@ -243,6 +727,9 @@ int runOnnxTestImage(int argc,char** argv)
         <<"       decoder="<<decoderPath<<"\n"
         <<"       image  ="<<imagePath<<"\n"
         <<"       prompt ="<<(mode==PromptMode::SEED_POINTS?"seed_points":"bounding_box")<<"\n"
+        <<"       device ="<<requestedDevice
+        <<" (cuda="<<(SAM2::hasCudaDriver() ? "yes" : "no")
+        <<", dml="<<(SAM2::hasDirectMLProvider() ? "yes" : "no")<<")\n"
         <<"       threads="<<threads<<"\n\n";
 
     AppState st;
@@ -254,7 +741,9 @@ int runOnnxTestImage(int argc,char** argv)
             ArtifactResolver::preferQuantizedEncoderPath(requestedEncoderPath, initDevice);
         const auto decoderSelection = ArtifactResolver::resolveImageDecoderPath(
             requestedDecoderPath,
-            mode==PromptMode::SEED_POINTS ? "seed_points" : "bounding_box");
+            mode==PromptMode::SEED_POINTS ? "seed_points" : "bounding_box",
+            false,
+            initDevice);
 
         cout<<"[INFO] Initialising on "<<initDevice<<" with "<<initThreads<<" thread(s)\n";
         cout<<"[INFO] Resolved encoder: "<<resolvedEncoder<<"\n";
@@ -274,19 +763,22 @@ int runOnnxTestImage(int argc,char** argv)
         return false;
     };
 
-    if(!initializeOnDevice(device)) {
-        if(device != "cpu") {
-            cerr<<"[WARN] Falling back to CPU runtime.\n";
-            if(initializeOnDevice("cpu")) {
-                cout<<"[INFO] CPU fallback initialised successfully.\n";
-            } else {
-                cerr<<"[ERROR] SAM2 init failed\n";
-                return 1;
+    bool initialized = false;
+    for (const string& candidateDevice : deviceCandidates) {
+        if (initializeOnDevice(candidateDevice)) {
+            initialized = true;
+            if (candidateDevice != deviceCandidates.front()) {
+                cout<<"[INFO] Fallback runtime initialised successfully: "<<candidateDevice<<"\n";
             }
-        } else {
-            cerr<<"[ERROR] SAM2 init failed\n";
-            return 1;
+            break;
         }
+        if (candidateDevice != "cpu") {
+            cerr<<"[WARN] Runtime "<<candidateDevice<<" unavailable; trying next candidate.\n";
+        }
+    }
+    if (!initialized) {
+        cerr<<"[ERROR] SAM2 init failed\n";
+        return 1;
     }
 
     st.original  = imgBGR;

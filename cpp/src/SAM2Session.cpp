@@ -20,6 +20,25 @@ static std::wstring strToWstr(const std::string &str)
     MultiByteToWideChar(CP_UTF8, 0, str.c_str(), static_cast<int>(str.size()), &wstr[0], sizeNeeded);
     return wstr;
 }
+
+using AppendDmlProviderFn = OrtStatus* (ORT_API_CALL *)(OrtSessionOptions*, int);
+
+AppendDmlProviderFn loadDmlProviderAppendFn()
+{
+    HMODULE hOrt = GetModuleHandleW(L"onnxruntime.dll");
+    if (!hOrt) {
+        hOrt = LoadLibraryExW(L"onnxruntime.dll", nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    }
+    if (!hOrt) {
+        hOrt = LoadLibraryW(L"onnxruntime.dll");
+    }
+    if (!hOrt) {
+        return nullptr;
+    }
+
+    return reinterpret_cast<AppendDmlProviderFn>(
+        GetProcAddress(hOrt, "OrtSessionOptionsAppendExecutionProvider_DML"));
+}
 #endif
 
 #ifdef __linux__
@@ -247,12 +266,9 @@ void SAM2::setupSessionOptions(Ort::SessionOptions &options,
         options.DisableCpuMemArena();
     }
 
-    const int cpuArena = shouldUseCpuArena(device) ? 1 : 0;
-
     if (device == "cpu") {
-        ortThrowIf(
-            OrtSessionOptionsAppendExecutionProvider_CPU(options, cpuArena),
-            "Append CPU EP failed");
+        // CPU EP is registered by ONNX Runtime by default. Explicitly appending
+        // it is unnecessary and can crash with some provider-specific ORT builds.
         return;
     }
 
@@ -269,9 +285,34 @@ void SAM2::setupSessionOptions(Ort::SessionOptions &options,
         cudaOpts.device_id = gpuId;
         options.AppendExecutionProvider_CUDA(cudaOpts);
 #endif
-        ortThrowIf(
-            OrtSessionOptionsAppendExecutionProvider_CPU(options, cpuArena),
-            "Append CPU EP (fallback) failed");
+        return;
+    }
+
+    if (device.rfind("dml", 0) == 0) {
+#ifdef _WIN32
+        int adapterId = 0;
+        const size_t colon = device.find(':');
+        if (colon != std::string::npos) {
+            try {
+                adapterId = std::stoi(device.substr(colon + 1));
+            } catch (...) {
+                adapterId = 0;
+            }
+        }
+
+        options.DisableMemPattern();
+        options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_DISABLE_ALL);
+        options.AddConfigEntry("session.disable_prepacking", "1");
+        options.AddConfigEntry("session.disable_gemm_fast_gelu_fusion", "1");
+        AppendDmlProviderFn appendDml = loadDmlProviderAppendFn();
+        if (!appendDml) {
+            throw std::runtime_error(
+                "DirectML EP is not available in the loaded ONNX Runtime runtime");
+        }
+        ortThrowIf(appendDml(options, adapterId), "Append DirectML EP failed");
+#else
+        throw std::runtime_error("DirectML EP is only available on Windows");
+#endif
         return;
     }
 
@@ -282,16 +323,12 @@ void SAM2::setupSessionOptions(Ort::SessionOptions &options,
             OrtSessionOptionsAppendExecutionProvider_CoreML(options, coremlFlags),
             "Append CoreML EP failed");
 #else
-        ortThrowIf(
-            OrtSessionOptionsAppendExecutionProvider_CPU(options, cpuArena),
-            "Append CPU EP (fallback) failed");
+        // CPU EP is registered by ONNX Runtime by default on non-Apple builds.
 #endif
         return;
     }
 
-    ortThrowIf(
-        OrtSessionOptionsAppendExecutionProvider_CPU(options, cpuArena),
-        "Append default CPU EP failed");
+    // CPU EP is registered by ONNX Runtime by default.
 }
 
 std::vector<SAM2Node> SAM2::getSessionNodes(Ort::Session* session, bool isInput)
@@ -1514,6 +1551,15 @@ bool SAM2::hasCudaDriver()
 
 #else
     cached = 0;
+    return false;
+#endif
+}
+
+bool SAM2::hasDirectMLProvider()
+{
+#if defined(_WIN32)
+    return loadDmlProviderAppendFn() != nullptr;
+#else
     return false;
 #endif
 }

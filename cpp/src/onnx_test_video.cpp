@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <exception>
 #include <iostream>
 #include <map>
@@ -58,6 +59,68 @@ cv::Mat overlayMask(const cv::Mat& image, const cv::Mat& maskGray)
 std::string promptModeName(PromptMode mode)
 {
     return mode == PromptMode::SEED_POINTS ? "seed_points" : "bounding_box";
+}
+
+std::string lowerCopy(std::string value)
+{
+    std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value;
+}
+
+std::string normalizeDeviceArg(const std::string& raw)
+{
+    const std::string value = lowerCopy(raw);
+    if (value.empty() || value == "auto") {
+        return "auto";
+    }
+    if (value == "cpu") {
+        return "cpu";
+    }
+    if (value == "cuda") {
+        return "cuda:0";
+    }
+    if (value.rfind("cuda:", 0) == 0) {
+        return value;
+    }
+    if (value == "dml" || value == "directml") {
+        return "dml:0";
+    }
+    if (value.rfind("dml:", 0) == 0) {
+        return value;
+    }
+    return "";
+}
+
+void appendDeviceCandidate(std::vector<std::string>* devices, const std::string& device)
+{
+    if (std::find(devices->begin(), devices->end(), device) == devices->end()) {
+        devices->push_back(device);
+    }
+}
+
+std::vector<std::string> buildDeviceCandidates(const std::string& requestedDevice, bool forceCpu)
+{
+    std::vector<std::string> devices;
+    if (requestedDevice == "auto") {
+        if (!forceCpu && SAM2::hasCudaDriver()) {
+            appendDeviceCandidate(&devices, "cuda:0");
+        }
+        if (!forceCpu && SAM2::hasDirectMLProvider()) {
+            appendDeviceCandidate(&devices, "dml:0");
+        }
+        appendDeviceCandidate(&devices, "cpu");
+        return devices;
+    }
+
+    appendDeviceCandidate(&devices, requestedDevice);
+    if (requestedDevice != "cpu") {
+        appendDeviceCandidate(&devices, "cpu");
+    }
+    return devices;
 }
 
 int clampFrameIndex(int frameIndex, int totalFrames)
@@ -470,6 +533,7 @@ static void printVideoUsage(const char* argv0)
         "  --memattn    memory_attention.onnx\n"
         "  --memenc     memory_encoder.onnx\n"
         "  --video      clip.mkv / clip.mp4 (file dialog if omitted)\n"
+        "  --device     auto | cpu | cuda[:N] | dml[:N]  (default: auto)\n"
         "  --threads    N   (#CPU threads)\n"
         "  --max_frames N   (early stop / navigation cap)\n"
         "  --prompt     seed_points | bounding_box   (default: seed_points)\n\n"
@@ -488,6 +552,7 @@ int runOnnxTestVideo(int argc, char** argv)
     std::string memAttnPath = "memory_attention.onnx";
     std::string memEncPath = "memory_encoder.onnx";
     std::string videoPath;
+    std::string requestedDevice = "auto";
 
     int threads = static_cast<int>(std::thread::hardware_concurrency());
     if (threads <= 0) {
@@ -510,6 +575,8 @@ int runOnnxTestVideo(int argc, char** argv)
             memEncPath = argv[++i];
         } else if (arg == "--video" && i + 1 < argc) {
             videoPath = argv[++i];
+        } else if (arg == "--device" && i + 1 < argc) {
+            requestedDevice = argv[++i];
         } else if (arg == "--threads" && i + 1 < argc) {
             threads = std::stoi(argv[++i]);
             threadsExplicit = true;
@@ -545,9 +612,14 @@ int runOnnxTestVideo(int argc, char** argv)
     const std::string requestedDecoderPath = decoderPath;
     const std::string requestedMemAttnPath = memAttnPath;
     const std::string requestedMemEncPath = memEncPath;
+    requestedDevice = normalizeDeviceArg(requestedDevice);
+    if (requestedDevice.empty()) {
+        std::cerr << "[ERROR] --device must be auto|cpu|cuda[:N]|dml[:N]\n";
+        return 1;
+    }
     const bool forceCpu = ArtifactResolver::isLowCostCpuProfile();
-    const bool cudaAvailable = !forceCpu && SAM2::hasCudaDriver();
-    std::string device = (forceCpu || !cudaAvailable) ? "cpu" : "cuda:0";
+    const std::vector<std::string> deviceCandidates = buildDeviceCandidates(requestedDevice, forceCpu);
+    std::string device = deviceCandidates.empty() ? "cpu" : deviceCandidates.front();
     if (!threadsExplicit) {
         threads = ArtifactResolver::preferredRuntimeThreads(threads, device);
     }
@@ -560,6 +632,9 @@ int runOnnxTestVideo(int argc, char** argv)
               << "       memEnc          = " << memEncPath << "\n"
               << "       video           = " << videoPath << "\n"
               << "       prompt          = " << promptModeName(mode) << "\n"
+              << "       device          = " << requestedDevice
+              << " (cuda=" << (SAM2::hasCudaDriver() ? "yes" : "no")
+              << ", dml=" << (SAM2::hasDirectMLProvider() ? "yes" : "no") << ")\n"
               << "       threads         = " << threads << "\n\n";
 
     SAM2 sam;
@@ -610,19 +685,24 @@ int runOnnxTestVideo(int argc, char** argv)
         return false;
     };
 
-    if (!initializeOnDevice(device)) {
-        if (device != "cpu") {
-            std::cerr << "[WARN] Falling back to CPU runtime.\n";
-            if (initializeOnDevice("cpu")) {
-                std::cout << "[INFO] CPU fallback initialised successfully.\n";
-            } else {
-                std::cerr << "[ERROR] SAM2 init failed\n";
-                return 1;
+    bool initialized = false;
+    for (const std::string& candidateDevice : deviceCandidates) {
+        if (initializeOnDevice(candidateDevice)) {
+            initialized = true;
+            if (candidateDevice != deviceCandidates.front()) {
+                std::cout << "[INFO] Fallback runtime initialised successfully: "
+                          << candidateDevice << "\n";
             }
-        } else {
-            std::cerr << "[ERROR] SAM2 init failed\n";
-            return 1;
+            break;
         }
+        if (candidateDevice != "cpu") {
+            std::cerr << "[WARN] Runtime " << candidateDevice
+                      << " unavailable; trying next candidate.\n";
+        }
+    }
+    if (!initialized) {
+        std::cerr << "[ERROR] SAM2 init failed\n";
+        return 1;
     }
 
     std::map<int, SAM2Prompts> anchors;

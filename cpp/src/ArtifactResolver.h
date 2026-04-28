@@ -54,6 +54,7 @@ inline std::string normalizePath(const std::filesystem::path &path)
 
 inline std::string preferredRuntimeProfile();
 inline bool isLowCostCpuProfile();
+inline bool pathExists(const std::filesystem::path &path);
 
 inline std::string preferredRuntimeProfile()
 {
@@ -71,6 +72,33 @@ inline bool isLowCostCpuProfile()
         || profile == "lowcost_cpu"
         || profile == "cpu-lowcost"
         || profile == "low-cost-cpu";
+}
+
+inline bool isDirectMLDevice(const std::string &device)
+{
+    return lowerCopy(device).rfind("dml", 0) == 0
+        || lowerCopy(device).rfind("directml", 0) == 0;
+}
+
+inline std::string preferDirectMLArtifactPath(const std::string &path,
+                                              const std::string &device)
+{
+    if (!isDirectMLDevice(device)) {
+        return path;
+    }
+
+    const std::filesystem::path current = candidatePath(path);
+    if (lowerCopy(current.extension().string()) != ".onnx") {
+        return path;
+    }
+
+    const std::filesystem::path dml =
+        current.parent_path() / (current.stem().string() + ".dml.onnx");
+    if (pathExists(dml)) {
+        return normalizePath(dml);
+    }
+
+    return path;
 }
 
 inline int preferredRuntimeThreads(int fallback, const std::string &device)
@@ -143,33 +171,29 @@ inline std::string preferQuantizedEncoderPath(const std::string &encoderPath,
                                               const std::string &device)
 {
     if (!isBasename(encoderPath, "image_encoder.onnx")) {
-        return encoderPath;
+        return preferDirectMLArtifactPath(encoderPath, device);
     }
 
     const std::filesystem::path current = candidatePath(encoderPath);
     const std::filesystem::path quantized = current.parent_path() / "image_encoder.int8.onnx";
     const std::string variant = preferredEncoderVariant();
+    std::string selected = encoderPath;
 
     if (variant == "fp32") {
-        return encoderPath;
-    }
-
-    if (variant == "int8") {
+        selected = encoderPath;
+    } else if (variant == "int8") {
         if (pathExists(quantized)) {
-            return normalizePath(quantized);
+            selected = normalizePath(quantized);
+        } else {
+            selected = encoderPath;
         }
-        return encoderPath;
+    } else if (device != "cpu") {
+        selected = encoderPath;
+    } else if (pathExists(quantized)) {
+        selected = normalizePath(quantized);
     }
 
-    if (device != "cpu") {
-        return encoderPath;
-    }
-
-    if (pathExists(quantized)) {
-        return normalizePath(quantized);
-    }
-
-    return encoderPath;
+    return preferDirectMLArtifactPath(selected, device);
 }
 
 inline std::string preferQuantizedRuntimeArtifactPath(const std::string &path,
@@ -185,33 +209,34 @@ inline std::string preferQuantizedRuntimeArtifactPath(const std::string &path,
         current.parent_path() / (current.stem().string() + ".int8.onnx");
 
     if (variant == "fp32") {
-        return path;
+        return preferDirectMLArtifactPath(path, device);
     }
 
     if (variant == "int8") {
         if (pathExists(quantized)) {
-            return normalizePath(quantized);
+            return preferDirectMLArtifactPath(normalizePath(quantized), device);
         }
-        return path;
+        return preferDirectMLArtifactPath(path, device);
     }
 
     if (device != "cpu") {
-        return path;
+        return preferDirectMLArtifactPath(path, device);
     }
 
     if (pathExists(quantized)) {
-        return normalizePath(quantized);
+        return preferDirectMLArtifactPath(normalizePath(quantized), device);
     }
 
-    return path;
+    return preferDirectMLArtifactPath(path, device);
 }
 
 inline ImageDecoderSelection resolveImageDecoderPath(const std::string &decoderPath,
                                                      const std::string &promptMode,
-                                                     bool experimentalImagePointDecoder = false)
+                                                     bool experimentalImagePointDecoder = false,
+                                                     const std::string &device = "cpu")
 {
     if (!isBasename(decoderPath, "image_decoder.onnx")) {
-        return {decoderPath, "manual"};
+        return {preferDirectMLArtifactPath(decoderPath, device), "manual"};
     }
 
     const std::filesystem::path current = candidatePath(decoderPath);
@@ -220,20 +245,26 @@ inline ImageDecoderSelection resolveImageDecoderPath(const std::string &decoderP
     if (promptMode == "bounding_box") {
         const std::filesystem::path specialized = directory / "image_decoder_box.onnx";
         if (pathExists(specialized)) {
-            return {normalizePath(specialized), "specialized"};
+            return {
+                preferDirectMLArtifactPath(normalizePath(specialized), device),
+                "specialized"};
         }
-        return {decoderPath, "legacy"};
+        return {preferDirectMLArtifactPath(decoderPath, device), "legacy"};
     }
 
     if (promptMode == "seed_points") {
         const std::filesystem::path specialized = directory / "image_decoder_points.onnx";
         if (experimentalImagePointDecoder && pathExists(specialized)) {
-            return {normalizePath(specialized), "specialized"};
+            return {
+                preferDirectMLArtifactPath(normalizePath(specialized), device),
+                "specialized"};
         }
-        return {decoderPath, experimentalImagePointDecoder ? "legacy-missing-specialized" : "legacy-safe-seed-points"};
+        return {
+            preferDirectMLArtifactPath(decoderPath, device),
+            experimentalImagePointDecoder ? "legacy-missing-specialized" : "legacy-safe-seed-points"};
     }
 
-    return {decoderPath, "legacy"};
+    return {preferDirectMLArtifactPath(decoderPath, device), "legacy"};
 }
 
 inline VideoRuntimeSelection resolveVideoRuntimePaths(const std::string &decoderPath,
