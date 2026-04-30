@@ -1,368 +1,385 @@
 # sam2-onnx-cpp
 
-SAM2 ONNX inference for Python and C++, centered on a single production preset:
+SAM2 ONNX demos for Python and C++.
 
-- Model preset: `base_plus`
-- Runtime policy:
-  - Use GPU when CUDA ONNX Runtime is available
-  - Fall back to CPU otherwise
-- CPU fallback policy:
-  - Prefer the INT8 image encoder when it exists
-  - Keep video propagation modules FP32 by default for accuracy/stability
-  - Use lean thread and video-memory defaults automatically
+This repository is set up to show SAM2 running through ONNX Runtime on images and
+videos, with interactive point and box prompts. The default demo preset is:
 
-The production path is `auto`. Explicit `legacy` and `specialized` modes remain available only for benchmarking, regression checks, and debugging. The intended deployment flow is:
+- Model: `base_plus`
+- Python demos: `python/onnx_test_image.py`, `python/onnx_test_video.py`
+- C++ app: `Segment`
+- Image prompts: seed points or bounding boxes
+- Video prompts: annotate the first frame, then propagate
 
-1. Export `base_plus`
-2. Generate CPU INT8 companion artifacts
-3. Run the same app on every machine
-4. Let the runtime choose GPU or CPU automatically
-
-
-## Current Runtime Behavior
-
-For image inference:
-
-- GPU path: FP32 encoder and decoder
-- CPU path: INT8 encoder when `image_encoder.int8.onnx` exists
-
-For video inference in `auto` mode:
-
-- GPU path: `hybrid-propagate`
-  - init decoder: `image_decoder.onnx`
-  - propagate decoder: `video_decoder_propagate.onnx`
-  - memory attention: `memory_attention.onnx`
-  - memory encoder: `memory_encoder.onnx`
-- CPU path: `legacy`
-  - decoder: `image_decoder.onnx`
-  - memory attention: `memory_attention.onnx`
-  - memory encoder: `memory_encoder.onnx`
-  - image encoder uses `image_encoder.int8.onnx` when present
-  - video modules stay FP32 unless `SAM2_ORT_VIDEO_MODULE_VARIANT=int8` is set
-
-Why this split? On the tested hardware, the newer hybrid video path helps modestly on GPU, but the main CPU win comes from the INT8 image encoder and lean memory settings. Quantized video modules and the specialized propagate decoder did not produce a reliable CPU win, so they are opt-in developer choices rather than production defaults.
-
-Keep the legacy artifacts in the package. They are not the old user-facing path; they are the stable CPU production path and the frame-0 decoder for the GPU hybrid path.
-
+For live demos on CPU, keep video short with `--max_frames 2`, `3`, or `5`.
 
 ## Repository Layout
 
 ```text
 sam2-onnx-cpp/
-  checkpoints/                 Exported ONNX artifacts live here
-  cpp/                         C++ runtime and demo app
-  export/                      ONNX export pipeline
-  python/                      Python demos, benchmarks, quantization tools
-  sam2/                        Sparse checkout of the SAM2 code used for export/native comparison
-  fetch_sparse.bat
-  fetch_sparse.sh
+|-- checkpoints/
+|   `-- base_plus/
+|-- cpp/
+|   |-- CMakeLists.txt
+|   `-- src/
+|-- export/
+|   `-- onnx_export.py
+|-- python/
+|   |-- onnx_test_image.py
+|   |-- onnx_test_video.py
+|   `-- benchmark_onnx_variants.py
+|-- sam2/
+|-- fetch_sparse.bat
+|-- fetch_sparse.sh
+`-- README.md
 ```
 
+## Demo Controls
 
-## Exported Artifacts
+Seed points:
 
-`export/onnx_export.py --model_size base_plus` writes the canonical SAM2 ONNX files plus the specialized video/image variants used for comparison and optimized GPU video propagation.
+- Left click: foreground point
+- Right click: background point
+- Middle click: clear
+- `Esc`: quit
 
-Common outputs in `checkpoints/base_plus/`:
+Bounding box:
 
-- `image_encoder.onnx`
-- `image_decoder.onnx`
-- `memory_attention.onnx`
-- `memory_encoder.onnx`
-- `image_decoder_box.onnx`
-- `video_decoder_init.onnx`
-- `video_decoder_propagate.onnx`
-- `memory_attention_objptr.onnx`
-- `memory_attention_no_objptr.onnx`
-- `memory_attention_no_objptr_1frame.onnx`
-- `memory_encoder_lite.onnx`
-- `manifest.json`
+- Drag left mouse button: draw box
+- Right or middle click: clear
+- `Esc`: quit
 
-CPU quantization scripts add companion artifacts such as:
+If `--image` or `--video` is omitted, the demo opens a file selector.
 
-- `image_encoder.int8.onnx`
-- `video_decoder_propagate.int8.onnx`
-- `memory_attention.int8.onnx`
-- `memory_encoder.int8.onnx`
+## macOS Workflow
 
-The runtime continues to accept the canonical FP32 paths. On CPU it automatically resolves the image encoder to `image_encoder.int8.onnx` when present. Quantized video modules are available for experiments; production keeps them FP32 unless you explicitly set `SAM2_ORT_VIDEO_MODULE_VARIANT=int8`.
+These commands assume Apple Silicon with Homebrew in `/opt/homebrew`.
 
+### 1. Create the Python environment
 
-## Windows Quick Start
+```bash
+cd /Users/pgarcia/Documents/sam2-onnx-cpp
+python3 -m venv sam2_env
+source sam2_env/bin/activate
+python -m pip install --upgrade pip
+python -m pip install torch onnx onnxruntime onnxscript hydra-core iopath pillow opencv-python pyqt5
+```
 
-### 1. Fetch the sparse SAM2 checkout and checkpoints
+### 2. Fetch SAM2 source assets
 
-From the repository root:
+```bash
+chmod +x fetch_sparse.sh
+./fetch_sparse.sh
+```
+
+### 3. Export the ONNX models
+
+```bash
+source sam2_env/bin/activate
+python export/onnx_export.py --model_size base_plus
+```
+
+This should populate:
+
+```text
+checkpoints/base_plus/image_encoder.onnx
+checkpoints/base_plus/image_decoder.onnx
+checkpoints/base_plus/memory_attention.onnx
+checkpoints/base_plus/memory_encoder.onnx
+```
+
+Optional CPU companion artifact:
+
+```bash
+python python/quantize_image_encoder.py --model_size base_plus
+```
+
+### 4. Run Python image demos
+
+```bash
+source sam2_env/bin/activate
+
+python python/onnx_test_image.py \
+  --model_size base_plus \
+  --prompt seed_points
+
+python python/onnx_test_image.py \
+  --model_size base_plus \
+  --prompt bounding_box
+```
+
+To avoid the file selector:
+
+```bash
+python python/onnx_test_image.py \
+  --model_size base_plus \
+  --prompt bounding_box \
+  --image ../sam2/notebooks/images/truck.jpg
+```
+
+### 5. Run Python video demos
+
+Keep CPU demos short:
+
+```bash
+python python/onnx_test_video.py \
+  --model_size base_plus \
+  --prompt seed_points \
+  --max_frames 5 \
+  --session_warmup 0
+
+python python/onnx_test_video.py \
+  --model_size base_plus \
+  --prompt bounding_box \
+  --max_frames 5 \
+  --session_warmup 0
+```
+
+The output video is written next to the selected input video.
+
+### 6. Build C++ on macOS
+
+Install OpenCV with Homebrew:
+
+```bash
+brew install opencv
+```
+
+Download or unpack ONNX Runtime for macOS arm64, then point CMake at it. Example:
+
+```bash
+cd /Users/pgarcia/Documents/sam2-onnx-cpp/cpp
+
+cmake -S . -B build_release \
+  -DOpenCV_DIR="$(brew --prefix opencv)/lib/cmake/opencv4" \
+  -DONNXRUNTIME_DIR="/opt/onnxruntime-osx-arm64-1.23.2"
+
+cmake --build build_release --target Segment --clean-first
+cmake --install build_release --prefix package
+```
+
+The packaged app is:
+
+```text
+cpp/package/Segment.app/Contents/MacOS/Segment
+```
+
+### 7. Run C++ demos on macOS
+
+```bash
+cd /Users/pgarcia/Documents/sam2-onnx-cpp
+
+SEG=cpp/package/Segment.app/Contents/MacOS/Segment
+CKPT=checkpoints/base_plus
+```
+
+Image:
+
+```bash
+"$SEG" --onnx_test_image \
+  --prompt seed_points \
+  --encoder "$CKPT/image_encoder.onnx" \
+  --decoder "$CKPT/image_decoder.onnx"
+
+"$SEG" --onnx_test_image \
+  --prompt bounding_box \
+  --encoder "$CKPT/image_encoder.onnx" \
+  --decoder "$CKPT/image_decoder.onnx"
+```
+
+Video:
+
+```bash
+"$SEG" --onnx_test_video \
+  --prompt seed_points \
+  --max_frames 5 \
+  --device cpu \
+  --threads 4 \
+  --encoder "$CKPT/image_encoder.onnx" \
+  --decoder "$CKPT/image_decoder.onnx" \
+  --memattn "$CKPT/memory_attention.onnx" \
+  --memenc "$CKPT/memory_encoder.onnx"
+```
+
+For a noninteractive smoke test:
+
+```bash
+"$SEG" --onnx_test_image \
+  --no_gui \
+  --image ../sam2/notebooks/images/truck.jpg \
+  --box 90,55,230,185 \
+  --encoder "$CKPT/image_encoder.onnx" \
+  --decoder "$CKPT/image_decoder.onnx" \
+  --device cpu \
+  --save_overlay /tmp/sam2_cpp_overlay.png
+```
+
+## Windows Workflow
+
+Run these from a PowerShell prompt.
+
+### 1. Create the Python environment
+
+```powershell
+cd C:\path\to\sam2-onnx-cpp
+python -m venv sam2_env
+.\sam2_env\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install torch onnx onnxruntime onnxscript hydra-core iopath pillow opencv-python pyqt5
+```
+
+For ONNX Runtime CUDA:
+
+```powershell
+python -m pip uninstall -y onnxruntime
+python -m pip install onnxruntime-gpu
+```
+
+### 2. Fetch SAM2 source assets
 
 ```powershell
 .\fetch_sparse.bat
 ```
 
-### 2. Create and activate the virtual environment
-
-```powershell
-python -m venv sam2_env
-.\sam2_env\Scripts\Activate
-```
-
-### 3. Install Python dependencies
-
-CPU-only:
-
-```powershell
-pip install torch onnx onnxruntime onnxscript hydra-core iopath pillow opencv-python pyqt5
-```
-
-NVIDIA GPU:
-
-```powershell
-pip install torch onnx onnxruntime-gpu onnxscript hydra-core iopath pillow opencv-python pyqt5
-```
-
-Notes:
-
-- GPU execution through ONNX Runtime still requires matching NVIDIA runtime libraries.
-- If those libraries are missing, the app can still run on CPU.
-- Native SAM2 CUDA benchmarking requires a CUDA-enabled PyTorch build. ONNX GPU inference does not automatically imply that native PyTorch CUDA is available.
-
-### 4. Export `base_plus`
+### 3. Export the ONNX models
 
 ```powershell
 .\sam2_env\Scripts\python.exe .\export\onnx_export.py --model_size base_plus
 ```
 
-### 5. Generate CPU INT8 companion artifacts
-
-The INT8 image encoder is recommended for deployment even if some machines will use GPU, because CPU fallback will pick it up automatically.
+Optional CPU companion artifact:
 
 ```powershell
 .\sam2_env\Scripts\python.exe .\python\quantize_image_encoder.py --model_size base_plus
 ```
 
-Optional developer benchmark artifacts:
-
-```powershell
-.\sam2_env\Scripts\python.exe .\python\quantize_video_modules.py --model_size base_plus
-```
-
-Keep production video modules FP32 unless a local benchmark shows the INT8 variants are both faster and accurate enough for your target machines.
-
-### 6. Run the Python demos
+### 4. Run Python demos on Windows
 
 Image:
 
 ```powershell
-.\sam2_env\Scripts\python.exe .\python\onnx_test_image.py --model_size base_plus --prompt seed_points
-.\sam2_env\Scripts\python.exe .\python\onnx_test_image.py --model_size base_plus --prompt bounding_box
+.\sam2_env\Scripts\python.exe .\python\onnx_test_image.py `
+  --model_size base_plus `
+  --prompt seed_points
+
+.\sam2_env\Scripts\python.exe .\python\onnx_test_image.py `
+  --model_size base_plus `
+  --prompt bounding_box
 ```
 
 Video:
 
 ```powershell
-.\sam2_env\Scripts\python.exe .\python\onnx_test_video.py --model_size base_plus --prompt seed_points
-.\sam2_env\Scripts\python.exe .\python\onnx_test_video.py --model_size base_plus --prompt bounding_box
+.\sam2_env\Scripts\python.exe .\python\onnx_test_video.py `
+  --model_size base_plus `
+  --prompt seed_points `
+  --max_frames 5 `
+  --session_warmup 0
 ```
 
-Useful override for testing CPU fallback on a machine that has a GPU:
+To force CPU behavior on a GPU machine:
 
 ```powershell
 $env:SAM2_ORT_RUNTIME_PROFILE = "cpu_lowcost"
 ```
 
-Unset it to return to normal auto behavior:
+Unset it:
 
 ```powershell
 Remove-Item Env:SAM2_ORT_RUNTIME_PROFILE -ErrorAction SilentlyContinue
 ```
 
-Useful runtime overrides:
+### 5. Build C++ on Windows
 
-| Variable | Values | Use |
-| --- | --- | --- |
-| `SAM2_ORT_ACCEL` | `auto`, `cpu`, `cuda`, `coreml` | Python acceleration override. Production default is `auto`. |
-| `SAM2_ORT_RUNTIME_PROFILE` | `cpu_lowcost` | Forces CPU and lean defaults in Python and C++. Useful for CPU QA. |
-| `SAM2_ORT_ENCODER_VARIANT` | `auto`, `fp32`, `int8` | Encoder artifact selection. Production default is `auto`. |
-| `SAM2_ORT_VIDEO_MODULE_VARIANT` | `fp32`, `int8`, `auto` | Video decoder/memory artifact selection. Production default is `fp32`. |
-| `SAM2_ORT_CPU_THREADS` | positive integer | Override CPU worker threads. |
-| `SAM2_ORT_VIDEO_MAX_MEMORY_FRAMES` | positive integer | Override video memory-frame cap. |
-| `SAM2_ORT_VIDEO_MAX_OBJECT_POINTERS` | positive integer | Override object-pointer memory cap. |
-
-
-## Windows C++ Build
-
-### 1. Install prerequisites
+Install:
 
 - Visual Studio 2022 with C++ tools
 - CMake
 - OpenCV
-- ONNX Runtime
+- ONNX Runtime for Windows
 
-For GPU deployment, also install or provide matching NVIDIA CUDA and cuDNN runtime DLLs.
-
-### 2. Configure and build
+Configure and build:
 
 ```powershell
-cd .\cpp
-cmake -S . -B build_release -G "Visual Studio 17 2022" `
+cd C:\path\to\sam2-onnx-cpp\cpp
+
+cmake -S . -B build_release -G "Visual Studio 17 2022" -A x64 `
   -DCMAKE_CONFIGURATION_TYPES=Release `
-  -DOpenCV_DIR="C:/Program Files/OpenCV/Release" `
-  -DONNXRUNTIME_DIR="C:/Program Files/onnxruntime-win-x64-gpu-1.22.1"
+  -DOpenCV_DIR="C:\path\to\opencv\build" `
+  -DONNXRUNTIME_DIR="C:\path\to\onnxruntime-win-x64-1.23.2"
 
 cmake --build .\build_release --config Release --target Segment -- /m:1
 ```
 
-The post-build step already copies `onnxruntime*.dll` from `ONNXRUNTIME_DIR/lib` beside the executable.
+For GPU deployment, point `ONNXRUNTIME_DIR` at an ONNX Runtime GPU package and make
+sure CUDA/cuDNN runtime DLLs are available to the executable.
 
-### 3. Run the C++ app
+### 6. Run C++ demos on Windows
 
-Recommended: pass canonical artifact paths explicitly from `checkpoints/base_plus`.
+From the repo root:
 
 ```powershell
-$ckpt = "$PWD\checkpoints\base_plus"
+$seg = ".\cpp\build_release\bin\Release\Segment.exe"
+$ckpt = ".\checkpoints\base_plus"
+```
 
-.\cpp\build_release\bin\Release\Segment.exe `
-  --onnx_test_image `
+Image:
+
+```powershell
+& $seg --onnx_test_image `
   --prompt seed_points `
+  --encoder "$ckpt\image_encoder.onnx" `
+  --decoder "$ckpt\image_decoder.onnx"
+
+& $seg --onnx_test_image `
+  --prompt bounding_box `
   --encoder "$ckpt\image_encoder.onnx" `
   --decoder "$ckpt\image_decoder.onnx"
 ```
 
-```powershell
-$ckpt = "$PWD\checkpoints\base_plus"
+Video:
 
-.\cpp\build_release\bin\Release\Segment.exe `
-  --onnx_test_video `
+```powershell
+& $seg --onnx_test_video `
   --prompt seed_points `
+  --max_frames 5 `
   --encoder "$ckpt\image_encoder.onnx" `
   --decoder "$ckpt\image_decoder.onnx" `
   --memattn "$ckpt\memory_attention.onnx" `
   --memenc "$ckpt\memory_encoder.onnx"
 ```
 
-Pass the canonical FP32 paths even for CPU deployment. The runtime resolves `image_encoder.onnx` to `image_encoder.int8.onnx` automatically when it runs on CPU.
-
-
-## Deployment Guidance
-
-### Simplest deployment: CPU-only
-
-Ship:
-
-- `Segment.exe`
-- `onnxruntime.dll`
-- `onnxruntime_providers_shared.dll`
-- OpenCV DLLs required by your build
-- `checkpoints/base_plus/` with:
-  - `image_encoder.onnx`
-  - `image_encoder.int8.onnx`
-  - `image_decoder.onnx`
-  - `memory_attention.onnx`
-  - `memory_encoder.onnx`
-
-This is the easiest production target for low-cost PCs. Quantized video modules can be shipped too, but production will not use them unless `SAM2_ORT_VIDEO_MODULE_VARIANT=int8` is set.
-
-### Mixed deployment: GPU when available, CPU otherwise
-
-Ship the CPU package above, plus:
-
-- `video_decoder_propagate.onnx`
-- ONNX Runtime GPU provider DLLs
-- matching CUDA runtime DLLs
-- matching cuDNN DLLs
-
-Behavior at runtime:
-
-- If the machine has a usable CUDA stack, the app runs the GPU path automatically.
-- If the CUDA stack is missing or incomplete, the app falls back to CPU automatically.
-- If `image_encoder.int8.onnx` is present, CPU fallback uses it automatically.
-
-Important:
-
-- A user having an NVIDIA GPU is not enough by itself.
-- For GPU execution, ONNX Runtime must be able to load its CUDA provider and the matching NVIDIA runtime libraries.
-- If you do not want to package that stack, deploy the CPU-only configuration instead.
-
-
-## Benchmarking
-
-Compare legacy ONNX, specialized ONNX, and the production `auto` choice:
+Noninteractive image smoke test:
 
 ```powershell
-$video = "C:\path\to\video.mp4"
-
-Remove-Item Env:SAM2_ORT_RUNTIME_PROFILE -ErrorAction SilentlyContinue
-$env:SAM2_ORT_ACCEL = "auto"
-$env:SAM2_ORT_ENCODER_VARIANT = "fp32"
-$env:SAM2_ORT_VIDEO_MODULE_VARIANT = "fp32"
-
-.\sam2_env\Scripts\python.exe .\python\benchmark_onnx_variants.py `
-  --model_size base_plus `
-  --video $video `
-  --prompt seed_points `
-  --frames 20 `
-  --video_order single `
-  --video_include_auto `
-  --session_warmup 1 `
-  --warmup 0
+& $seg --onnx_test_image `
+  --no_gui `
+  --image ".\sam2\notebooks\images\truck.jpg" `
+  --box 90,55,230,185 `
+  --encoder "$ckpt\image_encoder.onnx" `
+  --decoder "$ckpt\image_decoder.onnx" `
+  --save_overlay ".\tmp\sam2_cpp_overlay.png"
 ```
 
-Force CPU comparison:
+## Runtime Variables
 
-```powershell
-$env:SAM2_ORT_RUNTIME_PROFILE = "cpu_lowcost"
-$env:SAM2_ORT_ENCODER_VARIANT = "int8"
-$env:SAM2_ORT_VIDEO_MODULE_VARIANT = "fp32"
+| Variable | Values | Use |
+| --- | --- | --- |
+| `SAM2_ORT_ACCEL` | `auto`, `cpu`, `cuda`, `coreml` | Python provider selection. |
+| `SAM2_ORT_RUNTIME_PROFILE` | `cpu_lowcost` | Force CPU and lean settings. |
+| `SAM2_ORT_ENCODER_VARIANT` | `auto`, `fp32`, `int8` | Select encoder artifact. |
+| `SAM2_ORT_VIDEO_MODULE_VARIANT` | `fp32`, `int8`, `auto` | Select video module artifacts. |
+| `SAM2_ORT_CPU_THREADS` | integer | Override CPU thread count. |
+| `SAM2_ORT_VIDEO_MAX_MEMORY_FRAMES` | integer | Override video memory-frame cap. |
+| `SAM2_ORT_VIDEO_MAX_OBJECT_POINTERS` | integer | Override object-pointer cap. |
 
-.\sam2_env\Scripts\python.exe .\python\benchmark_onnx_variants.py `
-  --model_size base_plus `
-  --video $video `
-  --prompt seed_points `
-  --frames 5 `
-  --video_order single `
-  --video_include_auto `
-  --session_warmup 0 `
-  --warmup 0
-```
+## Demo Notes
 
-Compare ONNX to native SAM2 CPU:
-
-```powershell
-$env:SAM2_ORT_RUNTIME_PROFILE = "cpu_lowcost"
-$env:SAM2_ORT_ENCODER_VARIANT = "int8"
-$env:SAM2_ORT_VIDEO_MODULE_VARIANT = "fp32"
-
-.\sam2_env\Scripts\python.exe .\python\benchmark_onnx_variants.py `
-  --model_size base_plus `
-  --video $video `
-  --prompt seed_points `
-  --frames 5 `
-  --video_order single `
-  --video_include_auto `
-  --session_warmup 0 `
-  --warmup 0 `
-  --native_compare `
-  --native_device cpu
-```
-
-For `--native_device cuda`, the environment must contain a CUDA-enabled PyTorch build. ONNX CUDA can work even when native PyTorch CUDA benchmarking is unavailable.
-
-
-## macOS Notes
-
-macOS support remains CPU-first. CoreML can be experimented with for the encoder, but it is not the recommended production path for this repository.
-
-Basic flow:
-
-```bash
-chmod +x fetch_sparse.sh
-./fetch_sparse.sh
-python -m venv sam2_env
-source sam2_env/bin/activate
-pip install torch onnx onnxruntime onnxscript hydra-core iopath pillow opencv-python pyqt5
-python export/onnx_export.py --model_size base_plus
-python python/quantize_image_encoder.py --model_size base_plus
-```
-
+- SAM2 image encoder is the expensive step; interactive decoder calls should be much faster.
+- On CPU video, every propagated frame still pays encoder and memory-attention cost.
+- Use `--max_frames` for live demos.
+- If a GUI picker is awkward during a talk, pass `--image` or `--video`.
+- Keep canonical FP32 paths in commands. CPU fallback can still resolve an INT8 encoder when available.
 
 ## Acknowledgements
 
@@ -370,7 +387,6 @@ python python/quantize_image_encoder.py --model_size base_plus
 - https://github.com/ryouchinsa/sam-cpp-macos
 - https://github.com/Aimol-l/SAM2Export
 - https://github.com/Aimol-l/OrtInference
-
 
 ## License
 
