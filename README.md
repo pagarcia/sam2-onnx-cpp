@@ -13,6 +13,20 @@ videos, with interactive point and box prompts. The default demo preset is:
 
 For live demos on CPU, keep video short with `--max_frames 2`, `3`, or `5`.
 
+## Table Of Contents
+
+- [How The Pieces Fit](#how-the-pieces-fit)
+- [ONNX Export Strategy](#onnx-export-strategy)
+- [Repository Layout](#repository-layout)
+- [Demo Controls](#demo-controls)
+- [macOS Workflow](#macos-workflow)
+- [Windows Workflow](#windows-workflow)
+- [Runtime Variables](#runtime-variables)
+- [Demo Notes](#demo-notes)
+- [Known Issues And Next Steps](#known-issues-and-next-steps)
+- [Acknowledgements](#acknowledgements)
+- [License](#license)
+
 ## How The Pieces Fit
 
 ```mermaid
