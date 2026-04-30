@@ -438,6 +438,23 @@ Noninteractive image smoke test:
 - If a GUI picker is awkward during a talk, pass `--image` or `--video`.
 - Keep canonical FP32 paths in commands. CPU fallback can still resolve an INT8 encoder when available.
 
+## Known Issues And Next Steps
+
+- macOS is currently best treated as a CPU demo path. ONNX Runtime may expose a
+  CoreML provider, but CoreML acceleration still needs explicit validation,
+  especially for the encoder and fallback behavior.
+- CPU video is slow because every propagated frame still runs the encoder plus
+  memory attention. Future work should focus on better frame selection, cached
+  embeddings, quantized video modules, or a validated GPU/CoreML path.
+- The macOS C++ package depends on Homebrew OpenCV and local ONNX Runtime dylibs.
+  For a more portable app bundle, dependencies should be copied or relinked into
+  the `.app` instead of relying on the current Homebrew install.
+- Windows CUDA is the expected high-performance path, but it should be tested
+  regularly against the same image/video smoke tests used on macOS.
+- The export already writes multiple specialized ONNX artifacts. A useful next
+  step is stronger CI around `manifest.json`, model-shape inspection, and
+  noninteractive smoke tests after each export.
+
 ## Acknowledgements
 
 - https://github.com/facebookresearch/sam2
