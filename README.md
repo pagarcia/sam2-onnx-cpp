@@ -17,6 +17,7 @@ For live demos on CPU, keep video short with `--max_frames 5`, `10`, or `20`.
 
 - [How The Pieces Fit](#how-the-pieces-fit)
 - [ONNX Export Strategy](#onnx-export-strategy)
+- [Why ONNX?](#why-onnx)
 - [Repository Layout](#repository-layout)
 - [Demo Controls](#demo-controls)
 - [macOS Workflow](#macos-workflow)
@@ -83,6 +84,20 @@ This split mirrors the way SAM2 is used interactively: pay the encoder cost once
 then run the lightweight prompt decoder many times. It also keeps the C++ layer
 simple. The app does not need PyTorch or SAM2 internals; it only preprocesses
 images with OpenCV, feeds named ONNX inputs, and renders the returned masks.
+
+## Why ONNX?
+
+Native PyTorch is still the best reference path for research and model changes.
+The ONNX path is useful when the goal is deployment:
+
+- Python ONNX validates the exported graph before debugging C++ runtime code.
+- Python and C++ consume the same `.onnx` files, so both demos exercise the same
+  model contracts.
+- Runtime machines do not need a full PyTorch/SAM2 environment.
+- ONNX Runtime gives one deployment API across CPU, CUDA, DirectML, TensorRT, and
+  experimental CoreML paths.
+- Explicit graph inputs and outputs make performance easier to profile: encoder,
+  decoder, memory attention, and memory encoder can be timed separately.
 
 ## Repository Layout
 
