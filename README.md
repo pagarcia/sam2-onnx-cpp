@@ -11,7 +11,7 @@ videos, with interactive point and box prompts. The default demo preset is:
 - Image prompts: seed points or bounding boxes
 - Video prompts: annotate the first frame, then propagate
 
-For live demos on CPU, keep video short with `--max_frames 2`, `3`, or `5`.
+For live demos on CPU, keep video short with `--max_frames 5`, `10`, or `20`.
 
 ## Table Of Contents
 
@@ -196,13 +196,13 @@ Keep CPU demos short:
 python python/onnx_test_video.py \
   --model_size base_plus \
   --prompt seed_points \
-  --max_frames 5 \
+  --max_frames 20 \
   --session_warmup 0
 
 python python/onnx_test_video.py \
   --model_size base_plus \
   --prompt bounding_box \
-  --max_frames 5 \
+  --max_frames 20 \
   --session_warmup 0
 ```
 
@@ -263,7 +263,7 @@ Video:
 ```bash
 "$SEG" --onnx_test_video \
   --prompt seed_points \
-  --max_frames 5 \
+  --max_frames 20 \
   --device cpu \
   --threads 4 \
   --encoder "$CKPT/image_encoder.onnx" \
@@ -344,7 +344,7 @@ Video:
 .\sam2_env\Scripts\python.exe .\python\onnx_test_video.py `
   --model_size base_plus `
   --prompt seed_points `
-  --max_frames 5 `
+  --max_frames 20 `
   --session_warmup 0
 ```
 
@@ -413,7 +413,7 @@ Video:
 ```powershell
 & $seg --onnx_test_video `
   --prompt seed_points `
-  --max_frames 5 `
+  --max_frames 20 `
   --encoder "$ckpt\image_encoder.onnx" `
   --decoder "$ckpt\image_decoder.onnx" `
   --memattn "$ckpt\memory_attention.onnx" `
