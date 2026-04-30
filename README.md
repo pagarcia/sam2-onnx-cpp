@@ -53,6 +53,23 @@ flowchart TB
     I --> H
 ```
 
+## ONNX Export Strategy
+
+The export step is where the research model becomes a portable runtime. Instead
+of exporting SAM2 as one large ONNX graph, this repo cuts the PyTorch model into
+small contracts that are easier to load from Python or C++:
+
+- `image_encoder.onnx`: the heavy ViT pass from pixels to embeddings.
+- `image_decoder.onnx`: prompts plus embeddings to masks, so clicks and boxes
+  stay interactive after the encoder has run once.
+- `memory_attention.onnx` and `memory_encoder.onnx`: the video state machinery
+  that lets masks propagate across frames.
+
+This split mirrors the way SAM2 is used interactively: pay the encoder cost once,
+then run the lightweight prompt decoder many times. It also keeps the C++ layer
+simple. The app does not need PyTorch or SAM2 internals; it only preprocesses
+images with OpenCV, feeds named ONNX inputs, and renders the returned masks.
+
 ## Repository Layout
 
 ```text
