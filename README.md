@@ -13,6 +13,46 @@ videos, with interactive point and box prompts. The default demo preset is:
 
 For live demos on CPU, keep video short with `--max_frames 2`, `3`, or `5`.
 
+## How The Pieces Fit
+
+```mermaid
+flowchart LR
+    A["Meta SAM2 PyTorch checkpoint"] --> B["export/onnx_export.py"]
+    B --> C["image_encoder.onnx"]
+    B --> D["image_decoder.onnx"]
+    B --> E["memory_attention.onnx"]
+    B --> F["memory_encoder.onnx"]
+    C --> G["Python demos"]
+    D --> G
+    E --> G
+    F --> G
+    C --> H["C++ Segment app"]
+    D --> H
+    E --> H
+    F --> H
+    G --> I["ONNX Runtime providers<br/>CPU / CUDA / CoreML experiments"]
+    H --> I
+    I --> J["Interactive image masks<br/>and video overlays"]
+```
+
+At runtime, image segmentation uses the encoder once and then reuses the prompt
+decoder for each click or box. Video segmentation adds memory attention and a
+memory encoder so masks can propagate through frames.
+
+```mermaid
+flowchart TB
+    A["Image or video frame"] --> B["Preprocess with OpenCV"]
+    B --> C["image_encoder.onnx<br/>heavy ViT pass"]
+    C --> D["Image embeddings"]
+    E["User prompt<br/>points or box"] --> F["image_decoder.onnx<br/>fast interactive pass"]
+    D --> F
+    F --> G["Mask overlay"]
+    D --> H["memory_attention.onnx<br/>video only"]
+    F --> I["memory_encoder.onnx<br/>video only"]
+    H --> F
+    I --> H
+```
+
 ## Repository Layout
 
 ```text
