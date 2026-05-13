@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <set>
@@ -89,6 +90,45 @@ size_t preferredVideoObjectPointerLimit(const std::string &device)
     }
 
     return getenvSizeT("SAM2_ORT_VIDEO_MAX_OBJECT_POINTERS", 8u, 1u);
+}
+
+GraphOptimizationLevel resolveGraphOptimizationLevel(const std::string &device,
+                                                     GraphOptimizationLevel fallback)
+{
+    auto platformDefault = [&]() {
+#ifdef __APPLE__
+        if (device == "cpu") {
+            // Keep SAM2 aligned with the SAM3 macOS CPU runtime behavior.
+            // The optimizer can be re-enabled with SAM2_ORT_GRAPH_OPT once
+            // the local ONNX Runtime build is known to tolerate the graph.
+            return GraphOptimizationLevel::ORT_DISABLE_ALL;
+        }
+#endif
+        return fallback;
+    };
+
+    const char* value = std::getenv("SAM2_ORT_GRAPH_OPT");
+    if (!value || !*value) {
+        return platformDefault();
+    }
+
+    const std::string lowered = lowerCopy(value);
+    if (lowered == "disable" || lowered == "disabled" || lowered == "none" || lowered == "off") {
+        return GraphOptimizationLevel::ORT_DISABLE_ALL;
+    }
+    if (lowered == "basic") {
+        return GraphOptimizationLevel::ORT_ENABLE_BASIC;
+    }
+    if (lowered == "extended") {
+        return GraphOptimizationLevel::ORT_ENABLE_EXTENDED;
+    }
+    if (lowered == "all" || lowered == "full" || lowered == "aggressive") {
+        return GraphOptimizationLevel::ORT_ENABLE_ALL;
+    }
+    if (device.rfind("dml", 0) == 0 || device.rfind("directml", 0) == 0) {
+        return GraphOptimizationLevel::ORT_DISABLE_ALL;
+    }
+    return platformDefault();
 }
 
 std::vector<SAM2Node> getSessionNodesInternal(Ort::Session* session, bool isInput, bool includeShapes)
@@ -256,7 +296,7 @@ void SAM2::setupSessionOptions(Ort::SessionOptions &options,
     options.SetIntraOpNumThreads(safeThreads);
     options.SetInterOpNumThreads(1);
     options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
-    options.SetGraphOptimizationLevel(optLevel);
+    options.SetGraphOptimizationLevel(resolveGraphOptimizationLevel(device, optLevel));
 
 #if defined(__APPLE__)
     options.DisableMemPattern();
